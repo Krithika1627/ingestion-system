@@ -20,7 +20,7 @@ async function fetchInventorySnapshots(store, pageNo = 1) {
 
 // Unicommerce does NOT have a category API. Explicitly not implemented.
 const fetchCategories = async () => {
-  logger.warn('Unicommerce does not support category fetching.');
+  logger.warn({ message: 'Unicommerce does not support category fetching.' });
   return null; 
 };
 

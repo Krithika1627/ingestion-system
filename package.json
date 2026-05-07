@@ -20,7 +20,10 @@
   },
   "homepage": "https://github.com/BAEAI-7A/FS-1-krithika-CommerceIntergrationandDataIngestionEngine#readme",
   "dependencies": {
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "axios": "^1.16.0",
+    "dotenv": "^16.6.0",
     "express": "^5.2.1",
     "mongoose": "^9.6.1",
     "winston": "^3.19.0"
