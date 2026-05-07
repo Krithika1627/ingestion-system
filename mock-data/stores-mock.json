@@ -1,0 +1,145 @@
+{
+  "stores": [
+    {
+      "id": "store_shopify_001",
+      "name": "Mock Shopify Store",
+      "platform": "shopify",
+      "domain": "mockstore.myshopify.com",
+      "isActive": true,
+      "syncFrequency": "realtime",
+      "ingestionType": "full",
+      "credentials": {
+        "accessToken": "shpat_mock_token_xxx",
+        "apiKey": "shppa_mock_key_xxx",
+        "apiSecret": "shpss_mock_secret_xxx",
+        "storeUrl": "https://mockstore.myshopify.com"
+      },
+      "metaData": {
+        "currency": "INR",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "language": "en-IN"
+      },
+      "syncConfig": {
+        "availabilityThreshold": 10,
+        "batchSize": 50,
+        "rateLimitDelay": 500,
+        "retryAttempts": 3
+      },
+      "createdAt": "2024-01-01T00:00:00Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "store_magento_001",
+      "name": "Mock Magento Store",
+      "platform": "magento",
+      "domain": "mockstore.example.com",
+      "isActive": true,
+      "syncFrequency": "hourly",
+      "ingestionType": "full",
+      "credentials": {
+        "accessToken": "mock_magento_bearer_token_xxx",
+        "storeUrl": "https://mockstore.example.com"
+      },
+      "metaData": {
+        "currency": "INR",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "language": "en-IN"
+      },
+      "syncConfig": {
+        "availabilityThreshold": 15,
+        "batchSize": 20,
+        "rateLimitDelay": 1000,
+        "retryAttempts": 3
+      },
+      "createdAt": "2024-01-15T00:00:00Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "store_woo_001",
+      "name": "Mock WooCommerce Store",
+      "platform": "woocommerce",
+      "domain": "mockwoo.com",
+      "isActive": true,
+      "syncFrequency": "hourly",
+      "ingestionType": "full",
+      "credentials": {
+        "consumerKey": "ck_mock_consumer_key_xxx",
+        "consumerSecret": "cs_mock_consumer_secret_xxx",
+        "storeUrl": "https://mockwoo.com"
+      },
+      "metaData": {
+        "currency": "INR",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "language": "en-IN"
+      },
+      "syncConfig": {
+        "availabilityThreshold": 5,
+        "batchSize": 100,
+        "rateLimitDelay": 500,
+        "retryAttempts": 3
+      },
+      "createdAt": "2024-02-01T00:00:00Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "store_unicommerce_001",
+      "name": "Mock Unicommerce Tenant",
+      "platform": "unicommerce",
+      "domain": "mocktenant.unicommerce.com",
+      "isActive": true,
+      "syncFrequency": "hourly",
+      "ingestionType": "inventory-only",
+      "credentials": {
+        "authToken": "uni_mock_token_xxx",
+        "facilityCode": "FACILITY_DELHI_01",
+        "storeUrl": "https://mocktenant.unicommerce.com"
+      },
+      "metaData": {
+        "currency": "INR",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "language": "en-IN"
+      },
+      "syncConfig": {
+        "availabilityThreshold": 10,
+        "batchSize": 50,
+        "rateLimitDelay": 1000,
+        "retryAttempts": 3
+      },
+      "createdAt": "2024-02-15T00:00:00Z",
+      "lastSyncedAt": null
+    },
+    {
+      "id": "store_bigcommerce_001",
+      "name": "Mock BigCommerce Store",
+      "platform": "bigcommerce",
+      "domain": "store-abc123.mybigcommerce.com",
+      "isActive": true,
+      "syncFrequency": "hourly",
+      "ingestionType": "full",
+      "credentials": {
+        "apiKey": "mock_bc_token_xxx",
+        "apiSecret": "mock_bc_secret_xxx",
+        "storeHash": "abc123",
+        "storeUrl": "https://store-abc123.mybigcommerce.com"
+      },
+      "metaData": {
+        "currency": "INR",
+        "country": "IN",
+        "timezone": "Asia/Kolkata",
+        "language": "en-IN"
+      },
+      "syncConfig": {
+        "availabilityThreshold": 10,
+        "batchSize": 250,
+        "rateLimitDelay": 500,
+        "retryAttempts": 3
+      },
+      "createdAt": "2024-03-01T00:00:00Z",
+      "lastSyncedAt": null
+    }
+  ]
+}
