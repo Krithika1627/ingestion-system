@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const express = require('express');
 const logger = require('./services/logger.service');
-const { runShopifyProductPipeline } = require('./pipelines/product.pipeline');
+const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline } = require('./pipelines/category.pipeline');
 
 const app = express();
@@ -15,7 +15,7 @@ app.post('/sync/shopify', async (req, res) => {
 	const storeId = req?.body?.storeId || 'store_shopify_001';
 
 	try {
-		const summary = await runShopifyProductPipeline(storeId);
+		const summary = await runShopifyFullSync(storeId);
 		res.json({ success: true, message: 'Sync complete', summary });
 	} catch (error) {
 		logger.error({

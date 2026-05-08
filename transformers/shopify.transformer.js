@@ -116,6 +116,7 @@ function transformProduct(node, storeId) {
 		category: productType,
 		productType: 'unknown',
 		tags: safeArray(sourceNode?.tags),
+		categoryIds: [],
 		status: normalizeStatus(sourceNode?.status),
 		images,
 		variants,

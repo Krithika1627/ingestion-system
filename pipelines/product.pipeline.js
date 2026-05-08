@@ -18,19 +18,38 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const validate = ajv.compile(productSchema);
 
-function buildOfferFromProduct(product) {
-  const primaryVariant = product?.variants?.[0] || null;
+/**
+ * Compute availability status from inventory and in-stock flag.
+ * @param {number|null|undefined} inventoryQty
+ * @param {boolean} isInStock
+ * @returns {string}
+ */
+function getAvailability(inventoryQty, isInStock) {
+  if (typeof inventoryQty !== 'number') {
+    return isInStock ? 'in_stock' : 'out_of_stock';
+  }
 
+  return inventoryQty > 0 ? 'in_stock' : 'out_of_stock';
+}
+
+/**
+ * Build an offer record from a product and variant.
+ * @param {object} product
+ * @param {object} variant
+ * @returns {object}
+ */
+function buildOfferFromVariant(product, variant) {
   return {
     sourceId: product?.sourceId || null,
     storeId: product?.storeId || null,
-    sku: product?.sku || null,
-    title: product?.title || null,
-    price: primaryVariant?.price ?? null,
-    compareAtPrice: primaryVariant?.compareAtPrice ?? null,
-    currency: primaryVariant?.currency ?? null,
-    inventoryQty: primaryVariant?.inventoryQty ?? null,
-    isInStock: primaryVariant?.isInStock ?? false,
+    variantId: variant?.variantId || null,
+    sku: variant?.sku ?? product?.sku ?? null,
+    price: variant?.price ?? null,
+    compareAtPrice: variant?.compareAtPrice ?? null,
+    currency: variant?.currency ?? null,
+    inventoryQty: variant?.inventoryQty ?? null,
+    isInStock: variant?.isInStock ?? false,
+    availability: getAvailability(variant?.inventoryQty, variant?.isInStock ?? false),
     lastSyncedAt: product?.lastSyncedAt || new Date().toISOString()
   };
 }
@@ -87,22 +106,42 @@ async function runShopifyProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
-      const offerRecord = buildOfferFromProduct(canonicalProduct);
-      if (offerRecord?.sourceId && offerRecord?.storeId) {
-        await upsertOffer(offerRecord);
-        logger.info({
-          message: 'Shopify offer upserted',
-          platform: 'shopify',
-          storeId: pipelineStoreId,
-          sourceId: offerRecord?.sourceId || null
-        });
-      } else {
+      const variants = Array.isArray(canonicalProduct?.variants)
+        ? canonicalProduct.variants
+        : [];
+
+      if (variants.length === 0) {
         logger.warn({
-          message: 'Skipping offer upsert due to missing keys',
+          message: 'Skipping offer upserts due to missing variants',
           platform: 'shopify',
           storeId: pipelineStoreId,
           sourceId: canonicalProduct?.sourceId || null
         });
+      } else {
+        for (const variant of variants) {
+          try {
+            const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+            const upserted = await upsertOffer(offerRecord);
+            if (upserted) {
+              logger.info({
+                message: 'Shopify offer upserted',
+                platform: 'shopify',
+                storeId: pipelineStoreId,
+                sourceId: offerRecord?.sourceId || null,
+                variantId: offerRecord?.variantId || null
+              });
+            }
+          } catch (error) {
+            logger.error({
+              message: 'Shopify offer upsert failed',
+              platform: 'shopify',
+              storeId: pipelineStoreId,
+              sourceId: canonicalProduct?.sourceId || null,
+              variantId: variant?.variantId || null,
+              error: error?.message || String(error)
+            });
+          }
+        }
       }
 
       summary.success += 1;

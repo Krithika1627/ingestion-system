@@ -87,6 +87,24 @@ const COLLECTIONS_QUERY = `
   }
 `;
 
+const COLLECTION_PRODUCTS_QUERY = `
+  query getCollectionProducts($id: ID!, $first: Int!, $after: String) {
+    collection(id: $id) {
+      products(first: $first, after: $after) {
+        edges {
+          node {
+            id
+          }
+        }
+        pageInfo {
+          hasNextPage
+          endCursor
+        }
+      }
+    }
+  }
+`;
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -334,4 +352,80 @@ async function fetchCollections(storeId) {
   return collections;
 }
 
-module.exports = { fetchProducts, fetchCollections };
+/**
+ * Fetch product GIDs for a Shopify collection with cursor-based pagination.
+ * @param {string} storeId
+ * @param {string} collectionSourceId
+ * @returns {Promise<string[]>}
+ */
+async function fetchCollectionProducts(storeId, collectionSourceId) {
+  const context = { storeId, collectionSourceId };
+  let hasNextPage = true;
+  let cursor = null;
+  let page = 0;
+  const productIds = [];
+
+  if (!collectionSourceId) {
+    logger.warn({
+      message: 'Missing collectionSourceId for collection products fetch',
+      platform: 'shopify',
+      ...context
+    });
+    return productIds;
+  }
+
+  logger.info({
+    message: 'Shopify collection products fetch started',
+    platform: 'shopify',
+    ...context
+  });
+
+  while (hasNextPage) {
+    page += 1;
+    const payload = {
+      query: COLLECTION_PRODUCTS_QUERY,
+      variables: { id: collectionSourceId, first: DEFAULT_PAGE_SIZE, after: cursor }
+    };
+
+    const data = await requestGraphQL(payload, { ...context, page });
+    const productsData = data?.data?.collection?.products;
+    const edges = productsData?.edges || [];
+    const pageInfo = productsData?.pageInfo;
+    const nodes = edges.map((edge) => edge?.node?.id).filter(Boolean);
+
+    if (!productsData) {
+      logger.warn({
+        message: 'Shopify collection products missing in response',
+        platform: 'shopify',
+        ...context
+      });
+      break;
+    }
+
+    productIds.push(...nodes);
+
+    logger.info({
+      message: 'Shopify collection products page fetched',
+      platform: 'shopify',
+      page,
+      count: nodes.length,
+      ...context
+    });
+
+    await handleRateLimit(data, { ...context, page });
+
+    hasNextPage = Boolean(pageInfo?.hasNextPage);
+    cursor = pageInfo?.endCursor || null;
+  }
+
+  logger.info({
+    message: 'Shopify collection products fetch complete',
+    platform: 'shopify',
+    total: productIds.length,
+    ...context
+  });
+
+  return productIds;
+}
+
+module.exports = { fetchProducts, fetchCollections, fetchCollectionProducts };

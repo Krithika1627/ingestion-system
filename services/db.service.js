@@ -1,6 +1,7 @@
 /**
  * MongoDB service for connecting and upserting products, offers, and raw responses.
  */
+const { randomUUID } = require('crypto');
 const mongoose = require('mongoose');
 const logger = require('./logger.service');
 
@@ -98,18 +99,153 @@ async function upsertRaw(platform, rawData) {
 async function upsertOffer(offerRecord) {
   await connectDB();
 
-  if (!offerRecord?.sourceId || !offerRecord?.storeId) {
-    throw new Error('upsertOffer requires offerRecord.sourceId and offerRecord.storeId');
+  if (!offerRecord?.sourceId || !offerRecord?.storeId || !offerRecord?.variantId) {
+    logger.warn({
+      message: 'Skipping offer upsert due to missing keys',
+      service: 'db',
+      sourceId: offerRecord?.sourceId || null,
+      storeId: offerRecord?.storeId || null,
+      variantId: offerRecord?.variantId || null
+    });
+    return null;
   }
+
+  const productsCollection = getCollection('products');
+  const product = await productsCollection.findOne(
+    { sourceId: offerRecord.sourceId, storeId: offerRecord.storeId },
+    { projection: { id: 1 } }
+  );
+
+  if (!product?.id) {
+    logger.warn({
+      message: 'Offer productId missing for sourceId',
+      service: 'db',
+      sourceId: offerRecord.sourceId,
+      storeId: offerRecord.storeId
+    });
+  }
+
+  const payload = {
+    ...offerRecord,
+    id: offerRecord?.id || randomUUID(),
+    productId: product?.id || null
+  };
+  delete payload.title;
 
   const collection = getCollection('offers');
   await collection.updateOne(
-    { sourceId: offerRecord.sourceId, storeId: offerRecord.storeId },
-    { $set: offerRecord },
+    {
+      sourceId: payload.sourceId,
+      storeId: payload.storeId,
+      variantId: payload.variantId
+    },
+    { $set: payload, $unset: { title: '' } },
     { upsert: true }
   );
 
-  return offerRecord;
+  const legacyFilter = {
+    sourceId: payload.sourceId,
+    storeId: payload.storeId,
+    $or: [{ variantId: { $exists: false } }, { variantId: null }]
+  };
+  const legacyResult = await collection.deleteMany(legacyFilter);
+  if (legacyResult.deletedCount > 0) {
+    logger.info({
+      message: 'Removed legacy offers without variantId',
+      service: 'db',
+      sourceId: payload.sourceId,
+      storeId: payload.storeId,
+      deletedCount: legacyResult.deletedCount
+    });
+  }
+
+  return payload;
+}
+
+/**
+ * Get all categories for a store.
+ * @param {string} storeId
+ * @returns {Promise<object[]>}
+ */
+async function getCategoriesByStore(storeId) {
+  await connectDB();
+
+  if (!storeId) {
+    logger.warn({ message: 'Missing storeId for category fetch', service: 'db' });
+    return [];
+  }
+
+  const collection = getCollection('categories');
+  return collection.find({ storeId, source: 'shopify' }).toArray();
+}
+
+/**
+ * Add a categoryId to a product's categoryIds array (no duplicates).
+ * @param {string} productSourceId
+ * @param {string} categoryId
+ * @param {string} [storeId]
+ * @returns {Promise<boolean>}
+ */
+async function addCategoryIdToProduct(productSourceId, categoryId, storeId) {
+  await connectDB();
+
+  if (!productSourceId || !categoryId) {
+    logger.warn({
+      message: 'Missing keys for product category update',
+      service: 'db',
+      productSourceId: productSourceId || null,
+      categoryId: categoryId || null
+    });
+    return false;
+  }
+
+  const collection = getCollection('products');
+  const filter = storeId ? { sourceId: productSourceId, storeId } : { sourceId: productSourceId };
+  const result = await collection.updateOne(
+    filter,
+    { $addToSet: { categoryIds: categoryId } }
+  );
+
+  if (result.matchedCount === 0) {
+    logger.warn({
+      message: 'Product not found for category update',
+      service: 'db',
+      productSourceId,
+      categoryId,
+      storeId: storeId || null
+    });
+    return false;
+  }
+
+  return true;
+}
+
+/**
+ * Update lastSyncedAt on a store record.
+ * @param {string} storeId
+ * @returns {Promise<boolean>}
+ */
+async function updateStoreLastSynced(storeId) {
+  await connectDB();
+
+  if (!storeId) {
+    logger.warn({ message: 'Missing storeId for store sync update', service: 'db' });
+    return false;
+  }
+
+  const collection = getCollection('stores');
+  const result = await collection.updateOne(
+    { id: storeId },
+    { $set: { lastSyncedAt: new Date().toISOString() } }
+  );
+
+  if (result.matchedCount === 0) {
+    logger.warn({ message: 'Store not found for sync update', service: 'db', storeId });
+    return false;
+  }
+
+  logger.info({ message: 'Store sync timestamp updated', service: 'db', storeId });
+  return true;
 }
 
 /**
@@ -159,4 +295,13 @@ async function upsertCategory(canonicalCategory) {
   return canonicalCategory;
 }
 
-module.exports = { connectDB, upsertProduct, upsertRaw, upsertOffer, upsertCategory };
+module.exports = {
+  connectDB,
+  upsertProduct,
+  upsertRaw,
+  upsertOffer,
+  upsertCategory,
+  getCategoriesByStore,
+  addCategoryIdToProduct,
+  updateStoreLastSynced
+};
