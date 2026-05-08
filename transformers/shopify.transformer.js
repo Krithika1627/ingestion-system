@@ -128,4 +128,45 @@ function transformProduct(node, storeId) {
 	};
 }
 
-module.exports = { transformProduct };
+/**
+ * Transform Shopify collection node into canonical category.
+ * @param {object} node
+ * @param {string} storeId
+ * @returns {object}
+ */
+function transformCollection(node, storeId) {
+	const sourceNode = node || {};
+	const imageUrl = toNullableString(sourceNode?.image?.url);
+	const productsCount = sourceNode?.productsCount;
+	const productCount =
+		typeof productsCount === 'number'
+			? productsCount
+			: typeof productsCount?.count === 'number'
+				? productsCount.count
+				: null;
+
+	return {
+		id: randomUUID(),
+		sourceId: sourceNode?.id || null,
+		source: 'shopify',
+		storeId,
+		name: typeof sourceNode?.title === 'string' ? sourceNode.title : '',
+		slug: toNullableString(sourceNode?.handle),
+		description: toNullableString(sourceNode?.description),
+		imageUrl,
+		productCount,
+		parentId: null,
+		level: 0,
+		isActive: true,
+		includeInMenu: null,
+		path: null,
+		children: [],
+		position: null,
+		treeId: null,
+		createdAt: null,
+		updatedAt: sourceNode?.updatedAt || null,
+		lastSyncedAt: new Date().toISOString()
+	};
+}
+
+module.exports = { transformProduct, transformCollection };

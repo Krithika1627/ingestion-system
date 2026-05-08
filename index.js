@@ -6,6 +6,7 @@ require('dotenv').config();
 const express = require('express');
 const logger = require('./services/logger.service');
 const { runShopifyProductPipeline } = require('./pipelines/product.pipeline');
+const { runShopifyCategoryPipeline } = require('./pipelines/category.pipeline');
 
 const app = express();
 app.use(express.json());
@@ -24,6 +25,26 @@ app.post('/sync/shopify', async (req, res) => {
 			error: error?.message || String(error)
 		});
 		res.status(500).json({ success: false, message: error?.message || 'Sync failed' });
+	}
+});
+
+app.post('/sync/shopify/categories', async (req, res) => {
+	const storeId = 'store_shopify_001';
+
+	try {
+		const summary = await runShopifyCategoryPipeline(storeId);
+		res.json({ success: true, message: 'Category sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'Shopify category sync failed',
+			platform: 'shopify',
+			storeId,
+			error: error?.message || String(error)
+		});
+		res.status(500).json({
+			success: false,
+			message: error?.message || 'Category sync failed'
+		});
 	}
 });
 

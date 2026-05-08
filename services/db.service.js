@@ -112,4 +112,51 @@ async function upsertOffer(offerRecord) {
   return offerRecord;
 }
 
-module.exports = { connectDB, upsertProduct, upsertRaw, upsertOffer };
+/**
+ * Upsert a canonical category into the categories collection using sourceId + storeId.
+ * @param {object} canonicalCategory
+ * @returns {Promise<object>}
+ */
+async function upsertCategory(canonicalCategory) {
+  await connectDB();
+
+  if (!canonicalCategory?.sourceId || !canonicalCategory?.storeId) {
+    const error = new Error('upsertCategory requires canonicalCategory.sourceId and canonicalCategory.storeId');
+    logger.error({
+      message: 'Category upsert failed',
+      service: 'db',
+      sourceId: canonicalCategory?.sourceId || null,
+      storeId: canonicalCategory?.storeId || null,
+      error: error.message
+    });
+    throw error;
+  }
+
+  try {
+    const collection = getCollection('categories');
+    await collection.updateOne(
+      { sourceId: canonicalCategory.sourceId, storeId: canonicalCategory.storeId },
+      { $set: canonicalCategory },
+      { upsert: true }
+    );
+    logger.info({
+      message: 'Category upserted',
+      service: 'db',
+      sourceId: canonicalCategory.sourceId,
+      storeId: canonicalCategory.storeId
+    });
+  } catch (error) {
+    logger.error({
+      message: 'Category upsert failed',
+      service: 'db',
+      sourceId: canonicalCategory?.sourceId || null,
+      storeId: canonicalCategory?.storeId || null,
+      error: error?.message || String(error)
+    });
+    throw error;
+  }
+
+  return canonicalCategory;
+}
+
+module.exports = { connectDB, upsertProduct, upsertRaw, upsertOffer, upsertCategory };

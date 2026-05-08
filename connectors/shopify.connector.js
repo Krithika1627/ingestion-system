@@ -62,14 +62,21 @@ const PRODUCTS_QUERY = `
 `;
 
 const COLLECTIONS_QUERY = `
-  query Collections($first: Int!, $after: String) {
+  query getCollections($first: Int!, $after: String) {
     collections(first: $first, after: $after) {
       edges {
         node {
           id
           title
           handle
+          description
           updatedAt
+          image {
+            url
+          }
+          productsCount {
+            count
+          }
         }
       }
       pageInfo {
