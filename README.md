@@ -153,10 +153,14 @@ GET http://localhost:3000/health
 |---|---|---|
 | GET | `/health` | Server health check |
 | POST | `/sync/shopify` | Trigger full Shopify product sync |
-| POST | `/sync/magento` | Trigger full Magento product sync |
-| POST | `/sync/woocommerce` | Trigger full WooCommerce product sync |
+| POST | `/sync/shopify/categories` | Sync Shopify collections into categories collection |
+| POST | `/sync/magento` | Trigger full Magento product + category sync |
+| POST | `/sync/magento/categories` | Sync Magento category tree |
+| POST | `/sync/woocommerce` | Trigger full WooCommerce sync |
 | POST | `/sync/unicommerce` | Trigger Unicommerce inventory update |
-| POST | `/sync/bigcommerce` | Trigger full BigCommerce product sync |
+| POST | `/sync/bigcommerce` | Trigger full BigCommerce sync |
+| POST | `/stores` | Seed or create a store record |
+| GET  | `/stores` | List all connected stores |
 
 **Sync response format:**
 ```json
