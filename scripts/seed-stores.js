@@ -1,5 +1,5 @@
 /**
- * Seed the stores collection with the default Shopify store record.
+ * Seed the stores collection with default Shopify and Magento store records.
  */
 require('dotenv').config();
 
@@ -7,10 +7,10 @@ const mongoose = require('mongoose');
 const logger = require('../services/logger.service');
 
 /**
- * Upsert the default Shopify store record.
+ * Upsert the default store records.
  * @returns {Promise<void>}
  */
-async function seedStore() {
+async function seedStores() {
   const mongoUri = process.env.MONGO_URI;
 
   if (!mongoUri) {
@@ -18,38 +18,64 @@ async function seedStore() {
     return;
   }
 
-  const storeDoc = {
-    id: 'store_shopify_001',
-    name: 'BAE Shopify Dev Store',
-    platform: 'shopify',
-    domain: 'baefs1.myshopify.com',
-    isActive: true,
-    syncFrequency: 'realtime',
-    ingestionType: 'full',
-    metaData: {
-      currency: 'USD',
-      country: 'IN',
-      timezone: 'Asia/Kolkata'
+  const storeDocs = [
+    {
+      id: 'store_shopify_001',
+      name: 'BAE Shopify Dev Store',
+      platform: 'shopify',
+      domain: 'baefs1.myshopify.com',
+      isActive: true,
+      syncFrequency: 'realtime',
+      ingestionType: 'full',
+      metaData: {
+        currency: 'USD',
+        country: 'IN',
+        timezone: 'Asia/Kolkata'
+      },
+      syncConfig: {
+        availabilityThreshold: 10,
+        batchSize: 50,
+        rateLimitDelay: 500,
+        retryAttempts: 3
+      },
+      createdAt: new Date().toISOString(),
+      lastSyncedAt: null
     },
-    syncConfig: {
-      availabilityThreshold: 10,
-      batchSize: 50,
-      rateLimitDelay: 500,
-      retryAttempts: 3
-    },
-    createdAt: new Date().toISOString(),
-    lastSyncedAt: null
-  };
+    {
+      id: 'store_magento_001',
+      name: 'BAE Magento Dev Store',
+      platform: 'magento',
+      domain: 'magento2-demo.magebit.com',
+      isActive: true,
+      syncFrequency: 'hourly',
+      ingestionType: 'full',
+      metaData: {
+        currency: 'INR',
+        country: 'IN',
+        timezone: 'Asia/Kolkata'
+      },
+      syncConfig: {
+        availabilityThreshold: 10,
+        batchSize: 20,
+        rateLimitDelay: 1000,
+        retryAttempts: 3
+      },
+      createdAt: new Date().toISOString(),
+      lastSyncedAt: null
+    }
+  ];
 
   try {
     await mongoose.connect(mongoUri);
     const collection = mongoose.connection.collection('stores');
-    await collection.updateOne({ id: storeDoc.id }, { $set: storeDoc }, { upsert: true });
-    logger.info({
-      message: 'Store seed complete',
-      service: 'seed',
-      storeId: storeDoc.id
-    });
+    for (const storeDoc of storeDocs) {
+      await collection.updateOne({ id: storeDoc.id }, { $set: storeDoc }, { upsert: true });
+      logger.info({
+        message: 'Store seed complete',
+        service: 'seed',
+        storeId: storeDoc.id
+      });
+    }
   } catch (error) {
     logger.error({
       message: 'Store seed failed',
@@ -61,4 +87,4 @@ async function seedStore() {
   }
 }
 
-seedStore();
+seedStores();

@@ -165,9 +165,10 @@ async function upsertOffer(offerRecord) {
 /**
  * Get all categories for a store.
  * @param {string} storeId
+ * @param {string} [source]
  * @returns {Promise<object[]>}
  */
-async function getCategoriesByStore(storeId) {
+async function getCategoriesByStore(storeId, source = 'shopify') {
   await connectDB();
 
   if (!storeId) {
@@ -176,7 +177,30 @@ async function getCategoriesByStore(storeId) {
   }
 
   const collection = getCollection('categories');
-  return collection.find({ storeId, source: 'shopify' }).toArray();
+  return collection.find({ storeId, source }).toArray();
+}
+
+/**
+ * Get raw responses for a platform and store.
+ * @param {string} platform
+ * @param {string} storeId
+ * @returns {Promise<object[]>}
+ */
+async function getRawResponsesByPlatform(platform, storeId) {
+  await connectDB();
+
+  if (!platform || !storeId) {
+    logger.warn({
+      message: 'Missing platform or storeId for raw response fetch',
+      service: 'db',
+      platform: platform || null,
+      storeId: storeId || null
+    });
+    return [];
+  }
+
+  const collection = getCollection('raw_responses');
+  return collection.find({ platform, storeId }).toArray();
 }
 
 /**
@@ -302,6 +326,7 @@ module.exports = {
   upsertOffer,
   upsertCategory,
   getCategoriesByStore,
+  getRawResponsesByPlatform,
   addCategoryIdToProduct,
   updateStoreLastSynced
 };

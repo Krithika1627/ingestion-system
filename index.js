@@ -6,7 +6,8 @@ require('dotenv').config();
 const express = require('express');
 const logger = require('./services/logger.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
-const { runShopifyCategoryPipeline } = require('./pipelines/category.pipeline');
+const { runShopifyCategoryPipeline, runMagentoCategoryPipeline } = require('./pipelines/category.pipeline');
+const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
 
 const app = express();
 app.use(express.json());
@@ -45,6 +46,34 @@ app.post('/sync/shopify/categories', async (req, res) => {
 			success: false,
 			message: error?.message || 'Category sync failed'
 		});
+	}
+});
+
+app.post('/sync/magento', async (req, res) => {
+	try {
+		const summary = await runMagentoFullSync('store_magento_001');
+		res.json({ success: true, message: 'Magento sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'Magento sync failed',
+			platform: 'magento',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'Magento sync failed' });
+	}
+});
+
+app.post('/sync/magento/categories', async (req, res) => {
+	try {
+		const summary = await runMagentoCategoryPipeline('store_magento_001');
+		res.json({ success: true, message: 'Magento category sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'Magento category sync failed',
+			platform: 'magento',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'Magento category sync failed' });
 	}
 });
 
