@@ -87,17 +87,18 @@ function extractCustomAttribute(customAttributes, code) {
  * Transform Magento product item into canonical product.
  * @param {object} item
  * @param {string} storeId
+ * @param {string} store
  * @param {string} storeBaseUrl
  * @returns {object}
  */
-function transformProduct(item, storeId, storeBaseUrl) {
+function transformProduct(item, store, storeBaseUrl) {
   const sourceItem = item || {};
   const customAttributes = safeArray(sourceItem?.custom_attributes);
   const baseUrl = typeof storeBaseUrl === 'string' ? storeBaseUrl.replace(/\/$/, '') : '';
   const stockItem = sourceItem?.extension_attributes?.stock_item || null;
   const inventoryQty = typeof stockItem?.qty === 'number' ? stockItem.qty : null;
   const isInStock = Boolean(stockItem?.is_in_stock);
-  const currency = process.env.MAGENTO_CURRENCY || 'INR';
+  const currency = store?.metaData?.currency || 'INR';
 
   const images = safeArray(sourceItem?.media_gallery_entries)
     .filter((entry) => entry && entry.disabled !== true)
@@ -151,7 +152,7 @@ function transformProduct(item, storeId, storeBaseUrl) {
     id: randomUUID(),
     sourceId: sourceItem?.id !== undefined && sourceItem?.id !== null ? String(sourceItem.id) : null,
     source: 'magento',
-    storeId,
+    storeId: store?.id || null,
     sku,
     title: typeof sourceItem?.name === 'string' ? sourceItem.name : '',
     description: extractCustomAttribute(customAttributes, 'description'),
@@ -180,10 +181,10 @@ function transformProduct(item, storeId, storeBaseUrl) {
  * Transform Magento category node into canonical category.
  * @param {object} node
  * @param {string|null} parentCanonicalId
- * @param {string} storeId
+ * @param {object} store
  * @returns {object}
  */
-function transformCategory(node, parentCanonicalId, storeId) {
+function transformCategory(node, parentCanonicalId, store) {
   const sourceNode = node || {};
   const customAttributes = safeArray(sourceNode?.custom_attributes);
 
@@ -191,7 +192,7 @@ function transformCategory(node, parentCanonicalId, storeId) {
     id: randomUUID(),
     sourceId: sourceNode?.id !== undefined && sourceNode?.id !== null ? String(sourceNode.id) : null,
     source: 'magento',
-    storeId,
+    storeId: store?.id || null,
     name: typeof sourceNode?.name === 'string' ? sourceNode.name : '',
     slug: extractCustomAttribute(customAttributes, 'url_key'),
     description: extractCustomAttribute(customAttributes, 'description'),

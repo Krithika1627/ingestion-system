@@ -6,7 +6,13 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint .",
-    "format": "prettier --write ."
+    "format": "prettier --write .",
+    
+    "setup-indexes": "node scripts/setup-indexes.js",
+    "seed-stores": "node scripts/seed-stores.js",
+    "sync-shopify": "curl -X POST http://localhost:3000/sync/shopify",
+    "sync-magento": "curl -X POST http://localhost:3000/sync/magento"
+
   },
   "repository": {
     "type": "git",
