@@ -52,7 +52,11 @@ async function upsertProduct(canonicalProduct) {
 
   const collection = getCollection('products');
   await collection.updateOne(
-    { sourceId: canonicalProduct.sourceId },
+    {
+      sourceId: canonicalProduct.sourceId,
+      source: canonicalProduct.source,
+      storeId: canonicalProduct.storeId
+    },
     { $set: canonicalProduct },
     { upsert: true }
   );
@@ -273,6 +277,100 @@ async function updateStoreLastSynced(storeId) {
 }
 
 /**
+ * Get a store record by storeId.
+ * @param {string} storeId
+ * @returns {Promise<object|null>}
+ */
+async function getStoreById(storeId) {
+  await connectDB();
+
+  if (!storeId) {
+    logger.warn({ message: 'Missing storeId for store fetch', service: 'db' });
+    return null;
+  }
+
+  const collection = getCollection('stores');
+  return collection.findOne({ id: storeId });
+}
+
+/**
+ * Get a category by sourceId, storeId, and source.
+ * @param {string} sourceId
+ * @param {string} storeId
+ * @param {string} source
+ * @returns {Promise<object|null>}
+ */
+async function getCategoryBySourceId(sourceId, storeId, source) {
+  await connectDB();
+
+  if (!sourceId || !storeId || !source) {
+    logger.warn({
+      message: 'Missing keys for category lookup',
+      service: 'db',
+      sourceId: sourceId || null,
+      storeId: storeId || null,
+      source: source || null
+    });
+    return null;
+  }
+
+  const collection = getCollection('categories');
+  return collection.findOne({ sourceId: String(sourceId), storeId, source });
+}
+
+/**
+ * Get products by storeId and source.
+ * @param {string} storeId
+ * @param {string} source
+ * @returns {Promise<object[]>}
+ */
+async function getProductsByStoreAndSource(storeId, source) {
+  await connectDB();
+
+  if (!storeId || !source) {
+    logger.warn({
+      message: 'Missing storeId or source for product fetch',
+      service: 'db',
+      storeId: storeId || null,
+      source: source || null
+    });
+    return [];
+  }
+
+  const collection = getCollection('products');
+  return collection.find({ storeId, source }).toArray();
+}
+
+/**
+ * Replace a product's categoryIds with canonical UUIDs.
+ * @param {string} productSourceId
+ * @param {string} storeId
+ * @param {string[]} categoryIds
+ * @returns {Promise<boolean>}
+ */
+async function updateProductCategoryIds(productSourceId, storeId, categoryIds) {
+  await connectDB();
+
+  if (!productSourceId || !storeId) {
+    logger.warn({
+      message: 'Missing keys for product category update',
+      service: 'db',
+      productSourceId: productSourceId || null,
+      storeId: storeId || null
+    });
+    return false;
+  }
+
+  const collection = getCollection('products');
+  const result = await collection.updateOne(
+    { sourceId: productSourceId, storeId },
+    { $set: { categoryIds: categoryIds || [] } }
+  );
+
+  return result.matchedCount > 0;
+}
+
+/**
  * Upsert a canonical category into the categories collection using sourceId + storeId.
  * @param {object} canonicalCategory
  * @returns {Promise<object>}
@@ -295,7 +393,11 @@ async function upsertCategory(canonicalCategory) {
   try {
     const collection = getCollection('categories');
     await collection.updateOne(
-      { sourceId: canonicalCategory.sourceId, storeId: canonicalCategory.storeId },
+      {
+        sourceId: canonicalCategory.sourceId,
+        source: canonicalCategory.source,
+        storeId: canonicalCategory.storeId
+      },
       { $set: canonicalCategory },
       { upsert: true }
     );
@@ -326,6 +428,10 @@ module.exports = {
   upsertOffer,
   upsertCategory,
   getCategoriesByStore,
+  getStoreById,
+  getCategoryBySourceId,
+  getProductsByStoreAndSource,
+  updateProductCategoryIds,
   getRawResponsesByPlatform,
   addCategoryIdToProduct,
   updateStoreLastSynced

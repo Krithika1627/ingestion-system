@@ -6,8 +6,9 @@ require('dotenv').config();
 const express = require('express');
 const logger = require('./services/logger.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
-const { runShopifyCategoryPipeline, runMagentoCategoryPipeline } = require('./pipelines/category.pipeline');
+const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
+const { runWooFullSync } = require('./pipelines/woocommerce.pipeline');
 
 const app = express();
 app.use(express.json());
@@ -74,6 +75,35 @@ app.post('/sync/magento/categories', async (req, res) => {
 			error: error?.message || String(error)
 		});
 		res.status(500).json({ success: false, error: error?.message || 'Magento category sync failed' });
+	}
+});
+
+app.post('/sync/woocommerce', async (req, res) => {
+	try {
+		const storeId = req?.body?.storeId || 'store_woo_001';
+		const summary = await runWooFullSync(storeId);
+		res.json({ success: true, message: 'WooCommerce sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'WooCommerce sync failed',
+			platform: 'woocommerce',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'WooCommerce sync failed' });
+	}
+});
+
+app.post('/sync/woocommerce/categories', async (req, res) => {
+	try {
+		const summary = await runWooCategoryPipeline('store_woo_001');
+		res.json({ success: true, message: 'WooCommerce category sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'WooCommerce category sync failed',
+			platform: 'woocommerce',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'WooCommerce category sync failed' });
 	}
 });
 

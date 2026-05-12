@@ -6,8 +6,10 @@ const addFormats = require('ajv-formats');
 const logger = require('../services/logger.service');
 const { fetchCollections } = require('../connectors/shopify.connector');
 const { transformCollection } = require('../transformers/shopify.transformer');
-const { fetchCategories } = require('../connectors/magento.connector');
-const { transformCategory } = require('../transformers/magento.transformer');
+const { fetchCategories: fetchMagentoCategories } = require('../connectors/magento.connector');
+const { transformCategory: transformMagentoCategory } = require('../transformers/magento.transformer');
+const { fetchCategories: fetchWooCategories } = require('../connectors/woocommerce.connector');
+const { transformCategory: transformWooCategory } = require('../transformers/woocommerce.transformer');
 const { connectDB, upsertCategory } = require('../services/db.service');
 const categorySchema = require('../schemas/category.schema.json');
 
@@ -93,7 +95,8 @@ async function runShopifyCategoryPipeline(storeId) {
  * @param {object[]} result
  * @returns {object[]}
  */
-function flattenCategoryTree(node, parentCanonicalId, storeId, result = []) {
+function flattenCategoryTree(node, parentCanonicalId, store, result = []){
+
   if (!node) {
     return result;
   }
@@ -102,25 +105,26 @@ function flattenCategoryTree(node, parentCanonicalId, storeId, result = []) {
 
   if (level === 0) {
     for (const child of node?.children_data || []) {
-      flattenCategoryTree(child, parentCanonicalId || null, storeId, result);
+      flattenCategoryTree(child, parentCanonicalId || null, store, result);;
     }
     return result;
   }
+  
 
   if (level === 1) {
-    const canonicalRoot = transformCategory(node, parentCanonicalId || null, storeId);
+    const canonicalRoot = transformMagentoCategory(node, parentCanonicalId, store);
     result.push(canonicalRoot);
     for (const child of node?.children_data || []) {
-      flattenCategoryTree(child, canonicalRoot.id, storeId, result);
+      flattenCategoryTree(child, canonicalRoot.id, store, result);
     }
     return result;
   }
 
-  const canonical = transformCategory(node, parentCanonicalId, storeId);
+  const canonical = transformMagentoCategory(node, parentCanonicalId, store);
   result.push(canonical);
 
   for (const child of node?.children_data || []) {
-    flattenCategoryTree(child, canonical.id, storeId, result);
+    flattenCategoryTree(child, canonical.id, store, result);
   }
 
   return result;
@@ -143,8 +147,12 @@ async function runMagentoCategoryPipeline(storeId) {
 
   await connectDB();
 
-  const rawTree = await fetchCategories({ id: pipelineStoreId });
-  const canonicalCategories = flattenCategoryTree(rawTree, null, pipelineStoreId, []);
+  const { getStoreById } = require('../services/db.service');
+
+  const storeRecord = await getStoreById(pipelineStoreId);
+
+  const rawTree = await fetchMagentoCategories({ id: pipelineStoreId });
+  const canonicalCategories = flattenCategoryTree(rawTree, null, storeRecord, []);
   const summary = {
     total: canonicalCategories.length,
     success: 0,
@@ -196,4 +204,90 @@ async function runMagentoCategoryPipeline(storeId) {
   return summary;
 }
 
-module.exports = { runShopifyCategoryPipeline, runMagentoCategoryPipeline };
+/**
+ * Run WooCommerce category ingestion pipeline.
+ * @param {string} storeId
+ * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
+ */
+async function runWooCategoryPipeline(storeId) {
+  const pipelineStoreId = storeId || 'store_woo_001';
+  const startTime = Date.now();
+
+  logger.info({
+    message: 'WooCommerce category pipeline started',
+    platform: 'woocommerce',
+    storeId: pipelineStoreId
+  });
+
+  await connectDB();
+
+  const rawCategories = await fetchWooCategories({ id: pipelineStoreId });
+  const canonicalWithParent = rawCategories.map((node) =>
+    transformWooCategory(node, pipelineStoreId)
+  );
+
+  const idMap = new Map(
+    canonicalWithParent
+      .filter((category) => category?.sourceId && category?.id)
+      .map((category) => [category.sourceId, category.id])
+  );
+
+  const resolvedCategories = canonicalWithParent.map((category) => {
+    const parentId = category?.parentSourceId ? idMap.get(category.parentSourceId) || null : null;
+    const resolved = { ...category, parentId };
+    delete resolved.parentSourceId;
+    return resolved;
+  });
+
+  const summary = {
+    total: resolvedCategories.length,
+    success: 0,
+    failed: 0,
+    duration: 0
+  };
+
+  for (const canonicalCategory of resolvedCategories) {
+    try {
+      const isValid = validate(canonicalCategory);
+
+      if (!isValid) {
+        summary.failed += 1;
+        logger.warn({
+          message: 'WooCommerce category validation failed',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalCategory?.sourceId || null,
+          errors: validate.errors
+        });
+        continue;
+      }
+
+      await upsertCategory(canonicalCategory);
+      summary.success += 1;
+    } catch (error) {
+      summary.failed += 1;
+      logger.error({
+        message: 'WooCommerce category pipeline error',
+        platform: 'woocommerce',
+        storeId: pipelineStoreId,
+        sourceId: canonicalCategory?.sourceId || null,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  summary.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  logger.info({
+    message: 'WooCommerce category pipeline complete',
+    platform: 'woocommerce',
+    storeId: pipelineStoreId,
+    total: summary.total,
+    success: summary.success,
+    failed: summary.failed,
+    duration: summary.duration
+  });
+
+  return summary;
+}
+
+module.exports = { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline };

@@ -7,13 +7,16 @@ const { randomUUID } = require('crypto');
 const logger = require('../services/logger.service');
 const { fetchProducts: fetchShopifyProducts } = require('../connectors/shopify.connector');
 const { fetchProducts: fetchMagentoProducts } = require('../connectors/magento.connector');
+const { fetchProducts: fetchWooProducts } = require('../connectors/woocommerce.connector');
 const { transformProduct: transformShopifyProduct } = require('../transformers/shopify.transformer');
 const { transformProduct: transformMagentoProduct } = require('../transformers/magento.transformer');
+const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
 const {
   connectDB,
   upsertProduct,
   upsertRaw,
-  upsertOffer
+  upsertOffer,
+  getStoreById
 } = require('../services/db.service');
 const productSchema = require('../schemas/product.schema.json');
 
@@ -74,6 +77,31 @@ function deriveAvailability(qty, threshold = 10) {
     return 'limited';
   }
   return 'in_stock';
+}
+
+/**
+ * Derive WooCommerce availability from stock status and quantity.
+ * @param {number|null|undefined} qty
+ * @param {string} stockStatus
+ * @param {number} threshold
+ * @returns {string}
+ */
+function deriveWooAvailability(qty, stockStatus, threshold = 10) {
+  if (stockStatus === 'outofstock') {
+    return 'out_of_stock';
+  }
+  if (stockStatus === 'onbackorder') {
+    return 'on_backorder';
+  }
+  if (qty !== null && qty !== undefined && qty <= threshold) {
+    return 'limited';
+  }
+  return 'in_stock';
+}
+
+function parseNumber(value) {
+  const parsed = parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 /**
@@ -221,6 +249,8 @@ async function runMagentoProductPipeline(storeId) {
     duration: 0
   };
 
+  const storeRecord = await getStoreById(pipelineStoreId);
+
   for (const rawProduct of rawProducts) {
     try {
       const sourceId = rawProduct?.id !== undefined && rawProduct?.id !== null
@@ -236,7 +266,7 @@ async function runMagentoProductPipeline(storeId) {
 
       const canonicalProduct = transformMagentoProduct(
         rawProduct,
-        pipelineStoreId,
+        storeRecord,
         storeBaseUrl
       );
       const isValid = validate(canonicalProduct);
@@ -319,4 +349,136 @@ async function runMagentoProductPipeline(storeId) {
   return summary;
 }
 
-module.exports = { runShopifyProductPipeline, runMagentoProductPipeline };
+/**
+ * Run WooCommerce product ingestion pipeline.
+ * @param {string} storeId
+ * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
+ */
+async function runWooProductPipeline(storeId) {
+  const pipelineStoreId = storeId || 'store_woo_001';
+  const startTime = Date.now();
+
+  await connectDB();
+
+  const storeRecord = await getStoreById(pipelineStoreId);
+  const threshold = storeRecord?.syncConfig?.availabilityThreshold ?? 10;
+
+  const rawProducts = await fetchWooProducts({
+    id: pipelineStoreId,
+    syncConfig: storeRecord?.syncConfig || {}
+  });
+  const summary = {
+    total: rawProducts.length,
+    success: 0,
+    failed: 0,
+    duration: 0
+  };
+
+  for (const rawProduct of rawProducts) {
+    try {
+      const sourceId = rawProduct?.id !== undefined && rawProduct?.id !== null
+        ? String(rawProduct.id)
+        : null;
+      const rawPayload = {
+        storeId: pipelineStoreId,
+        sourceId,
+        data: rawProduct
+      };
+
+      await upsertRaw('woocommerce', rawPayload);
+
+      const canonicalProduct = transformWooProduct(rawProduct, pipelineStoreId);
+      const isValid = validate(canonicalProduct);
+
+      if (!isValid) {
+        summary.failed += 1;
+        logger.warn({
+          message: 'WooCommerce product validation failed',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null,
+          errors: validate.errors
+        });
+        continue;
+      }
+
+      await upsertProduct(canonicalProduct);
+      logger.info({
+        message: 'WooCommerce product upserted',
+        platform: 'woocommerce',
+        storeId: pipelineStoreId,
+        sourceId: canonicalProduct?.sourceId || null
+      });
+
+      const price = parseNumber(rawProduct?.price);
+      const regularPrice = parseNumber(rawProduct?.regular_price);
+      const salePrice = parseNumber(rawProduct?.sale_price);
+      const onSale = Boolean(rawProduct?.on_sale);
+      const discountPercent =
+        onSale && Number.isFinite(regularPrice) && Number.isFinite(salePrice) && regularPrice
+          ? Number((((regularPrice - salePrice) / regularPrice) * 100).toFixed(2))
+          : null;
+
+      const offerRecord = {
+        id: randomUUID(),
+        sourceId: sourceId,
+        productId: canonicalProduct?.id || null,
+        storeId: pipelineStoreId,
+        variantId: rawProduct?.sku || sourceId,
+        sku: rawProduct?.sku || null,
+        price: Number.isFinite(price) ? price : 0,
+        compareAtPrice: onSale && Number.isFinite(regularPrice) ? regularPrice : null,
+        discountPercent,
+        currency: 'INR',
+        availability: deriveWooAvailability(
+          rawProduct?.stock_quantity ?? null,
+          rawProduct?.stock_status,
+          threshold
+        ),
+        stockQty: rawProduct?.stock_quantity ?? null,
+        lastSyncedAt: new Date().toISOString()
+      };
+
+      const upserted = await upsertOffer(offerRecord);
+      if (upserted) {
+        logger.info({
+          message: 'WooCommerce offer upserted',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: offerRecord?.sourceId || null,
+          variantId: offerRecord?.variantId || null
+        });
+      }
+
+      summary.success += 1;
+    } catch (error) {
+      summary.failed += 1;
+      logger.error({
+        message: 'WooCommerce product pipeline error',
+        platform: 'woocommerce',
+        storeId: pipelineStoreId,
+        sourceId: rawProduct?.id || null,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  summary.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  logger.info({
+    message: 'WooCommerce product pipeline complete',
+    platform: 'woocommerce',
+    storeId: pipelineStoreId,
+    total: summary.total,
+    success: summary.success,
+    failed: summary.failed,
+    duration: summary.duration
+  });
+
+  return summary;
+}
+
+module.exports = {
+  runShopifyProductPipeline,
+  runMagentoProductPipeline,
+  runWooProductPipeline
+};

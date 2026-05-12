@@ -62,6 +62,28 @@ async function seedStores() {
       },
       createdAt: new Date().toISOString(),
       lastSyncedAt: null
+    },
+    {
+      id: 'store_woo_001',
+      name: 'BAE WooCommerce Dev Store',
+      platform: 'woocommerce',
+      domain: process.env.WOO_STORE_URL || '',
+      isActive: true,
+      syncFrequency: 'hourly',
+      ingestionType: 'full',
+      metaData: {
+        currency: 'INR',
+        country: 'IN',
+        timezone: 'Asia/Kolkata'
+      },
+      syncConfig: {
+        availabilityThreshold: 10,
+        batchSize: 100,
+        rateLimitDelay: 500,
+        retryAttempts: 3
+      },
+      createdAt: new Date().toISOString(),
+      lastSyncedAt: null
     }
   ];
 
