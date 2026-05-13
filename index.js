@@ -9,6 +9,7 @@ const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
 const { runWooFullSync } = require('./pipelines/woocommerce.pipeline');
+const { runUnicommerceInventorySync } = require('./pipelines/unicommerce.pipeline');
 
 const app = express();
 app.use(express.json());
@@ -104,6 +105,22 @@ app.post('/sync/woocommerce/categories', async (req, res) => {
 			error: error?.message || String(error)
 		});
 		res.status(500).json({ success: false, error: error?.message || 'WooCommerce category sync failed' });
+	}
+});
+
+app.post('/sync/unicommerce', async (req, res) => {
+	try {
+		const storeId = req?.body?.storeId || 'store_unicommerce_001';
+		const facilityCode = req?.body?.facilityCode || 'FACILITY_DELHI_01';
+		const summary = await runUnicommerceInventorySync(storeId, facilityCode);
+		res.json({ success: true, message: 'Unicommerce inventory sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'Unicommerce sync failed',
+			platform: 'unicommerce',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'Unicommerce sync failed' });
 	}
 });
 

@@ -371,6 +371,79 @@ async function updateProductCategoryIds(productSourceId, storeId, categoryIds) {
 }
 
 /**
+ * Update offers and product variants inventory by SKU.
+ * @param {string} skuCode
+ * @param {object} inventoryPatch
+ * @returns {Promise<object>}
+ */
+async function updateOfferInventory(skuCode, inventoryPatch) {
+  await connectDB();
+
+  if (!skuCode) {
+    logger.warn({ message: 'Missing skuCode for inventory update', service: 'db' });
+    return { offersMatched: 0, offersModified: 0, productsMatched: 0 };
+  }
+
+  const patch = inventoryPatch || {};
+  const fieldsToSet = Object.entries({
+    availability: patch.availability,
+    stockQty: patch.stockQty,
+    isInStock: patch.isInStock,
+    availableInventory: patch.availableInventory,
+    totalInventory: patch.totalInventory,
+    blockedInventory: patch.blockedInventory,
+    facilityCode: patch.facilityCode,
+    inventorySource: patch.inventorySource,
+    lastSyncedAt: patch.lastSyncedAt
+  }).reduce((acc, [key, value]) => {
+    if (value !== undefined) {
+      acc[key] = value;
+    }
+    return acc;
+  }, {});
+
+  const offersCollection = getCollection('offers');
+  const offerResult = await offersCollection.updateMany(
+    { sku: skuCode },
+    { $set: fieldsToSet }
+  );
+
+  if (offerResult.matchedCount === 0) {
+    logger.warn({
+      message: 'No offers found for inventory update',
+      service: 'db',
+      skuCode
+    });
+  } else {
+    logger.info({
+      message: 'Offer inventory updated',
+      service: 'db',
+      skuCode,
+      offersMatched: offerResult.matchedCount,
+      offersModified: offerResult.modifiedCount
+    });
+  }
+
+  const productsCollection = getCollection('products');
+  const productResult = await productsCollection.updateMany(
+    { 'variants.sku': skuCode },
+    {
+      $set: {
+        'variants.$[v].inventoryQty': patch.availableInventory,
+        'variants.$[v].isInStock': patch.isInStock
+      }
+    },
+    { arrayFilters: [{ 'v.sku': skuCode }] }
+  );
+
+  return {
+    offersMatched: offerResult.matchedCount,
+    offersModified: offerResult.modifiedCount,
+    productsMatched: productResult.matchedCount
+  };
+}
+
+/**
  * Upsert a canonical category into the categories collection using sourceId + storeId.
  * @param {object} canonicalCategory
  * @returns {Promise<object>}
@@ -432,6 +505,7 @@ module.exports = {
   getCategoryBySourceId,
   getProductsByStoreAndSource,
   updateProductCategoryIds,
+  updateOfferInventory,
   getRawResponsesByPlatform,
   addCategoryIdToProduct,
   updateStoreLastSynced

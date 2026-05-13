@@ -84,6 +84,29 @@ async function seedStores() {
       },
       createdAt: new Date().toISOString(),
       lastSyncedAt: null
+    },
+    {
+      id: 'store_unicommerce_001',
+      name: 'BAE Unicommerce Inventory Store',
+      platform: 'unicommerce',
+      domain: process.env.UNICOMMERCE_BASE_URL || 'https://demo.unicommerce.com',
+      isActive: true,
+      syncFrequency: 'hourly',
+      ingestionType: 'inventory_only',
+      metaData: {
+        currency: 'INR',
+        country: 'IN',
+        timezone: 'Asia/Kolkata',
+        facilityCode: 'FACILITY_DELHI_01'
+      },
+      syncConfig: {
+        availabilityThreshold: 10,
+        batchSize: 50,
+        rateLimitDelay: 500,
+        retryAttempts: 3
+      },
+      createdAt: new Date().toISOString(),
+      lastSyncedAt: null
     }
   ];
 

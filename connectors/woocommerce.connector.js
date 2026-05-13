@@ -292,7 +292,12 @@ async function fetchCategories(store) {
     });
 
     const response = await requestWithRetry(
-      () => axios.get(url),
+      () => axios.get(url, {
+        auth: {
+          username: process.env.WOO_CONSUMER_KEY,
+          password: process.env.WOO_CONSUMER_SECRET,
+        }
+      }),
       { storeId, page: currentPage, retryAttempts }
     );
 
