@@ -235,32 +235,32 @@ GET http://localhost:3000/health
 - [x] Store raw + normalized Shopify data in MongoDB
 - [x] Fetch Shopify collections (categories)
 - [x] Store canonical category records in MongoDB
-- [ ] Setup Magento API authentication (OAuth bearer token)
+- [x] Setup Magento API authentication (OAuth bearer token)
 - [ ] Fetch Magento products via REST API with pagination
-- [ ] Extract fields from Magento custom_attributes array
-- [ ] Handle Magento simple vs configurable product types
-- [ ] Build synthetic variants for Magento simple products
-- [ ] Prepend base URL to Magento image paths
-- [ ] Fetch Magento categories via /V1/categories endpoint
-- [ ] Validate and store Magento canonical records in MongoDB
+- [x] Extract fields from Magento custom_attributes array
+- [x] Handle Magento simple vs configurable product types
+- [x] Build synthetic variants for Magento simple products
+- [x] Prepend base URL to Magento image paths
+- [x] Fetch Magento categories via /V1/categories endpoint
+- [x] Validate and store Magento canonical records in MongoDB
 
 ---
 
 ### ⏳ Week 3 — WooCommerce + Unicommerce Connectors
 
 - [ ] Setup WooCommerce consumer key + secret authentication
-- [ ] Fetch WooCommerce products with pagination (per_page=100)
-- [ ] Strip HTML from WooCommerce descriptions
-- [ ] Handle WooCommerce variable products (fetch variations separately)
-- [ ] Handle stock_quantity null when manage_stock is false
-- [ ] Handle sale_price empty string edge case
-- [ ] Fetch WooCommerce categories
+- [x] Fetch WooCommerce products with pagination (per_page=100)
+- [x] Strip HTML from WooCommerce descriptions
+- [x] Handle WooCommerce variable products (fetch variations separately)
+- [x] Handle stock_quantity null when manage_stock is false
+- [x] Handle sale_price empty string edge case
+- [x] Fetch WooCommerce categories
 - [ ] Setup Unicommerce auth token + facility code
 - [ ] Fetch products from Unicommerce /catalog/itemType/get
 - [ ] Fetch inventory from Unicommerce /inventorySnapshot/get
-- [ ] Merge product + inventory using skuCode as join key
-- [ ] Compute availableQty = inventory - blockedInventory
-- [ ] Update existing offer records using SKU match (inventory-only)
+- [x] Merge product + inventory using skuCode as join key
+- [x] Compute availableQty = inventory - blockedInventory
+- [x] Update existing offer records using SKU match (inventory-only)
 
 ---
 
