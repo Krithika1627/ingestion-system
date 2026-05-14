@@ -107,6 +107,29 @@ async function seedStores() {
       },
       createdAt: new Date().toISOString(),
       lastSyncedAt: null
+    },
+    {
+      id: 'store_bigcommerce_001',
+      name: 'BAE BigCommerce Dev Store',
+      platform: 'bigcommerce',
+      domain: `https://store-${process.env.BIGCOMMERCE_STORE_HASH}.mybigcommerce.com`,
+      isActive: true,
+      syncFrequency: 'hourly',
+      ingestionType: 'full',
+      metaData: {
+        currency: 'INR',
+        country: 'IN',
+        timezone: 'Asia/Kolkata',
+        storeHash: process.env.BIGCOMMERCE_STORE_HASH
+      },
+      syncConfig: {
+        availabilityThreshold: 10,
+        batchSize: 250,
+        rateLimitDelay: 500,
+        retryAttempts: 3
+      },
+      createdAt: new Date().toISOString(),
+      lastSyncedAt: null
     }
   ];
 

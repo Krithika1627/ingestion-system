@@ -8,14 +8,17 @@ const logger = require('../services/logger.service');
 const { fetchProducts: fetchShopifyProducts } = require('../connectors/shopify.connector');
 const { fetchProducts: fetchMagentoProducts } = require('../connectors/magento.connector');
 const { fetchProducts: fetchWooProducts } = require('../connectors/woocommerce.connector');
+const { fetchProducts: fetchBigCommerceProducts } = require('../connectors/bigcommerce.connector');
 const { transformProduct: transformShopifyProduct } = require('../transformers/shopify.transformer');
 const { transformProduct: transformMagentoProduct } = require('../transformers/magento.transformer');
 const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
+const { transformProduct: transformBigCommerceProduct } = require('../transformers/bigcommerce.transformer');
 const {
   connectDB,
   upsertProduct,
   upsertRaw,
   upsertOffer,
+  getCategoriesByStore,
   getStoreById
 } = require('../services/db.service');
 const productSchema = require('../schemas/product.schema.json');
@@ -477,8 +480,173 @@ async function runWooProductPipeline(storeId) {
   return summary;
 }
 
+/**
+ * Run BigCommerce product ingestion pipeline.
+ * @param {string} storeId
+ * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
+ */
+async function runBigCommerceProductPipeline(storeId) {
+  const pipelineStoreId = storeId || 'store_bigcommerce_001';
+  const startTime = Date.now();
+
+  await connectDB();
+
+  const storeRecord = await getStoreById(pipelineStoreId);
+  const threshold = storeRecord?.syncConfig?.availabilityThreshold ?? 10;
+
+  const fetchResult = await fetchBigCommerceProducts({
+    id: pipelineStoreId,
+    syncConfig: storeRecord?.syncConfig || {}
+  });
+
+  const rawProducts = Array.isArray(fetchResult)
+    ? fetchResult
+    : Array.isArray(fetchResult?.products)
+      ? fetchResult.products
+      : [];
+
+  const brandMap = fetchResult?.brandMap instanceof Map
+    ? fetchResult.brandMap
+    : fetchResult?.brandMap && typeof fetchResult.brandMap === 'object'
+      ? fetchResult.brandMap
+      : null;
+
+  const categories = await getCategoriesByStore(pipelineStoreId, 'bigcommerce');
+  const categoryIdMap = new Map(
+    categories
+      .filter((category) => category?.sourceId && category?.id)
+      .map((category) => [String(category.sourceId), category.id])
+  );
+
+  const summary = {
+    total: rawProducts.length,
+    success: 0,
+    failed: 0,
+    duration: 0
+  };
+
+  for (const rawProduct of rawProducts) {
+    try {
+      const sourceId = rawProduct?.id !== undefined && rawProduct?.id !== null
+        ? String(rawProduct.id)
+        : null;
+      const rawPayload = {
+        storeId: pipelineStoreId,
+        sourceId,
+        data: rawProduct
+      };
+
+      await upsertRaw('bigcommerce', rawPayload);
+
+      const canonicalProduct = transformBigCommerceProduct(rawProduct, pipelineStoreId, {
+        categoryIdMap,
+        brandMap
+      });
+      const isValid = validate(canonicalProduct);
+
+      if (!isValid) {
+        summary.failed += 1;
+        logger.warn({
+          message: 'BigCommerce product validation failed',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null,
+          errors: validate.errors
+        });
+        continue;
+      }
+
+      await upsertProduct(canonicalProduct);
+      logger.info({
+        message: 'BigCommerce product upserted',
+        platform: 'bigcommerce',
+        storeId: pipelineStoreId,
+        sourceId: canonicalProduct?.sourceId || null
+      });
+
+      const tracking = rawProduct?.inventory_tracking;
+      const primaryVariant = rawProduct?.variants?.[0] || null;
+      const variantInventory = primaryVariant?.inventory_level;
+      const productInventory = rawProduct?.inventory_level;
+      const resolvedInventory = tracking === 'variant'
+        ? (typeof variantInventory === 'number' ? variantInventory : productInventory)
+        : productInventory;
+      const stockQty = tracking === 'none'
+        ? null
+        : resolvedInventory ?? 0;
+
+      const salePrice = parseNumber(rawProduct?.sale_price);
+      const price = parseNumber(rawProduct?.price);
+      const retailPrice = parseNumber(rawProduct?.retail_price);
+      const hasSale = Number.isFinite(salePrice) && salePrice > 0;
+      const effectivePrice = hasSale ? salePrice : Number.isFinite(price) ? price : 0;
+      const compareAtPrice = hasSale && Number.isFinite(retailPrice) ? retailPrice : null;
+      const discountPercent = hasSale && Number.isFinite(retailPrice) && retailPrice > 0
+        ? Number((((retailPrice - salePrice) / retailPrice) * 100).toFixed(2))
+        : null;
+
+      const variantId = primaryVariant?.id !== undefined && primaryVariant?.id !== null
+        ? String(primaryVariant.id)
+        : rawProduct?.sku || sourceId;
+      const sku = primaryVariant?.sku || rawProduct?.sku || null;
+
+      const offerRecord = {
+        id: randomUUID(),
+        sourceId: sourceId,
+        productId: canonicalProduct?.id || null,
+        storeId: pipelineStoreId,
+        variantId,
+        sku,
+        price: effectivePrice,
+        compareAtPrice,
+        discountPercent,
+        currency: 'INR',
+        availability: deriveAvailability(stockQty, threshold),
+        stockQty,
+        lastSyncedAt: new Date().toISOString()
+      };
+
+      const upserted = await upsertOffer(offerRecord);
+      if (upserted) {
+        logger.info({
+          message: 'BigCommerce offer upserted',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: offerRecord?.sourceId || null,
+          variantId: offerRecord?.variantId || null
+        });
+      }
+
+      summary.success += 1;
+    } catch (error) {
+      summary.failed += 1;
+      logger.error({
+        message: 'BigCommerce product pipeline error',
+        platform: 'bigcommerce',
+        storeId: pipelineStoreId,
+        sourceId: rawProduct?.id || null,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  summary.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  logger.info({
+    message: 'BigCommerce product pipeline complete',
+    platform: 'bigcommerce',
+    storeId: pipelineStoreId,
+    total: summary.total,
+    success: summary.success,
+    failed: summary.failed,
+    duration: summary.duration
+  });
+
+  return summary;
+}
+
 module.exports = {
   runShopifyProductPipeline,
   runMagentoProductPipeline,
-  runWooProductPipeline
+  runWooProductPipeline,
+  runBigCommerceProductPipeline
 };

@@ -6,10 +6,12 @@ require('dotenv').config();
 const express = require('express');
 const logger = require('./services/logger.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
-const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline } = require('./pipelines/category.pipeline');
+const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
 const { runWooFullSync } = require('./pipelines/woocommerce.pipeline');
 const { runUnicommerceInventorySync } = require('./pipelines/unicommerce.pipeline');
+const { runBigCommerceFullSync } = require('./pipelines/bigcommerce.pipeline');
+const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline');
 
 const app = express();
 app.use(express.json());
@@ -121,6 +123,39 @@ app.post('/sync/unicommerce', async (req, res) => {
 			error: error?.message || String(error)
 		});
 		res.status(500).json({ success: false, error: error?.message || 'Unicommerce sync failed' });
+	}
+});
+
+app.post('/sync/bigcommerce', async (req, res) => {
+	try {
+		const storeId = req?.body?.storeId || 'store_bigcommerce_001';
+		const summary = await runBigCommerceFullSync(storeId);
+		res.json({ success: true, message: 'BigCommerce sync complete', summary });
+	} catch (error) {
+		logger.error({
+			message: 'BigCommerce sync failed',
+			platform: 'bigcommerce',
+			error: error?.message || String(error)
+		});
+		res.status(500).json({ success: false, error: error?.message || 'BigCommerce sync failed' });
+	}
+});
+
+app.post('/sync/bigcommerce/categories', async (req, res) => {
+	try {
+		const summary = await runBigCommerceCategoryPipeline('store_bigcommerce_001');
+		res.json({ success: true, message: 'BigCommerce category sync complete', summary });
+	} catch (error) {
+		res.status(500).json({ success: false, error: error?.message || 'BigCommerce category sync failed' });
+	}
+});
+
+app.post('/sync/bigcommerce/products', async (req, res) => {
+	try {
+		const summary = await runBigCommerceProductPipeline('store_bigcommerce_001');
+		res.json({ success: true, message: 'BigCommerce product sync complete', summary });
+	} catch (error) {
+		res.status(500).json({ success: false, error: error?.message || 'BigCommerce product sync failed' });
 	}
 });
 

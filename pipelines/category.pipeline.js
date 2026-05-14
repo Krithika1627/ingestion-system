@@ -10,7 +10,9 @@ const { fetchCategories: fetchMagentoCategories } = require('../connectors/magen
 const { transformCategory: transformMagentoCategory } = require('../transformers/magento.transformer');
 const { fetchCategories: fetchWooCategories } = require('../connectors/woocommerce.connector');
 const { transformCategory: transformWooCategory } = require('../transformers/woocommerce.transformer');
-const { connectDB, upsertCategory } = require('../services/db.service');
+const { fetchCategories: fetchBigCommerceCategories } = require('../connectors/bigcommerce.connector');
+const { transformCategory: transformBigCommerceCategory } = require('../transformers/bigcommerce.transformer');
+const { connectDB, upsertCategory, getStoreById } = require('../services/db.service');
 const categorySchema = require('../schemas/category.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -290,4 +292,129 @@ async function runWooCategoryPipeline(storeId) {
   return summary;
 }
 
-module.exports = { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline };
+/**
+ * Run BigCommerce category ingestion pipeline.
+ * @param {string} storeId
+ * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
+ */
+async function runBigCommerceCategoryPipeline(storeId) {
+  const pipelineStoreId = storeId || 'store_bigcommerce_001';
+  const startTime = Date.now();
+
+  logger.info({
+    message: 'BigCommerce category pipeline started',
+    platform: 'bigcommerce',
+    storeId: pipelineStoreId
+  });
+
+  await connectDB();
+
+  const storeRecord = await getStoreById(pipelineStoreId);
+  const rawCategories = await fetchBigCommerceCategories({
+    id: pipelineStoreId,
+    metaData: storeRecord?.metaData || {},
+    syncConfig: storeRecord?.syncConfig || {}
+  });
+
+  const canonicalWithParent = rawCategories.map((node) =>
+    transformBigCommerceCategory(node, pipelineStoreId)
+  );
+
+  const idMap = new Map(
+    canonicalWithParent
+      .filter((category) => category?.sourceId && category?.id)
+      .map((category) => [category.sourceId, category.id])
+  );
+
+  const resolvedCategories = canonicalWithParent.map((category) => {
+    const parentId = category?.parentSourceId ? idMap.get(category.parentSourceId) || null : null;
+    const resolved = { ...category, parentId };
+    delete resolved.parentSourceId;
+    return resolved;
+  });
+
+  const categoryById = new Map(
+    resolvedCategories
+      .filter((category) => category?.id)
+      .map((category) => [category.id, category])
+  );
+
+  let updated = true;
+  let iterations = 0;
+  while (updated && iterations < resolvedCategories.length) {
+    updated = false;
+    for (const category of resolvedCategories) {
+      if (typeof category.level === 'number') {
+        continue;
+      }
+      if (!category.parentId) {
+        category.level = 0;
+        updated = true;
+        continue;
+      }
+      const parent = categoryById.get(category.parentId);
+      if (parent && typeof parent.level === 'number') {
+        category.level = parent.level + 1;
+        updated = true;
+      }
+    }
+    iterations += 1;
+  }
+
+  const summary = {
+    total: resolvedCategories.length,
+    success: 0,
+    failed: 0,
+    duration: 0
+  };
+
+  for (const canonicalCategory of resolvedCategories) {
+    try {
+      const isValid = validate(canonicalCategory);
+
+      if (!isValid) {
+        summary.failed += 1;
+        logger.warn({
+          message: 'BigCommerce category validation failed',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalCategory?.sourceId || null,
+          errors: validate.errors
+        });
+        continue;
+      }
+
+      await upsertCategory(canonicalCategory);
+      summary.success += 1;
+    } catch (error) {
+      summary.failed += 1;
+      logger.error({
+        message: 'BigCommerce category pipeline error',
+        platform: 'bigcommerce',
+        storeId: pipelineStoreId,
+        sourceId: canonicalCategory?.sourceId || null,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  summary.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  logger.info({
+    message: 'BigCommerce category pipeline complete',
+    platform: 'bigcommerce',
+    storeId: pipelineStoreId,
+    total: summary.total,
+    success: summary.success,
+    failed: summary.failed,
+    duration: summary.duration
+  });
+
+  return summary;
+}
+
+module.exports = {
+  runShopifyCategoryPipeline,
+  runMagentoCategoryPipeline,
+  runWooCategoryPipeline,
+  runBigCommerceCategoryPipeline
+};
