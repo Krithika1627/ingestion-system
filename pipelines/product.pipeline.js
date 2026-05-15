@@ -14,6 +14,11 @@ const { transformProduct: transformMagentoProduct } = require('../transformers/m
 const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
 const { transformProduct: transformBigCommerceProduct } = require('../transformers/bigcommerce.transformer');
 const {
+  buildGroupingKey,
+  findExistingProductMatch,
+  mergeMatchedProduct
+} = require('../services/product-matching.service');
+const {
   connectDB,
   upsertProduct,
   upsertRaw,
@@ -107,6 +112,25 @@ function parseNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+async function buildCategoryIdSet(storeId, source) {
+  const categories = await getCategoriesByStore(storeId, source);
+  return new Set(categories.map((category) => category?.id).filter(Boolean));
+}
+
+function hasUnmatchedCategories(categoryIds, categoryIdSet, rawCategoryCount) {
+  const normalized = Array.isArray(categoryIds) ? categoryIds.filter(Boolean) : [];
+  if (rawCategoryCount > 0 && normalized.length === 0) {
+    return true;
+  }
+  if (normalized.length === 0) {
+    return false;
+  }
+  if (!(categoryIdSet instanceof Set) || categoryIdSet.size === 0) {
+    return true;
+  }
+  return normalized.some((id) => !categoryIdSet.has(id));
+}
+
 /**
  * Run Shopify product ingestion pipeline.
  * @param {string} storeId
@@ -123,6 +147,12 @@ async function runShopifyProductPipeline(storeId) {
     total: rawProducts.length,
     success: 0,
     failed: 0,
+    duplicateProducts: 0,
+    missingBrands: 0,
+    missingSkus: 0,
+    unmatchedCategories: 0,
+    orphanOffers: 0,
+    invalidProducts: 0,
     duration: 0
   };
 
@@ -136,11 +166,21 @@ async function runShopifyProductPipeline(storeId) {
 
       await upsertRaw('shopify', rawPayload);
 
-      const canonicalProduct = transformShopifyProduct(rawProduct, pipelineStoreId);
+      let canonicalProduct = transformShopifyProduct(rawProduct, pipelineStoreId);
+      canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      if (!canonicalProduct?.brand) {
+        summary.missingBrands += 1;
+      }
+      if (!canonicalProduct?.sku) {
+        summary.missingSkus += 1;
+      }
+
       const isValid = validate(canonicalProduct);
 
       if (!isValid) {
         summary.failed += 1;
+        summary.invalidProducts += 1;
         logger.warn({
           message: 'Shopify product validation failed',
           platform: 'shopify',
@@ -149,6 +189,35 @@ async function runShopifyProductPipeline(storeId) {
           errors: validate.errors
         });
         continue;
+      }
+
+      const groupingKey = canonicalProduct?.groupingKey || null;
+      const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+      if (matchResult?.match) {
+        const isSameSource =
+          matchResult.match?.source === canonicalProduct?.source &&
+          matchResult.match?.sourceId === canonicalProduct?.sourceId;
+        if (!isSameSource) {
+          summary.duplicateProducts += 1;
+        }
+        logger.info({
+          message: 'Existing canonical product matched',
+          platform: 'shopify',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey,
+          matchType: matchResult.matchType,
+          canonicalProductId: matchResult.match?.id || null
+        });
+        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+      } else {
+        logger.info({
+          message: 'New canonical product created',
+          platform: 'shopify',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey
+        });
       }
 
       await upsertProduct(canonicalProduct);
@@ -183,6 +252,8 @@ async function runShopifyProductPipeline(storeId) {
                 sourceId: offerRecord?.sourceId || null,
                 variantId: offerRecord?.variantId || null
               });
+            } else {
+              summary.orphanOffers += 1;
             }
           } catch (error) {
             logger.error({
@@ -249,6 +320,12 @@ async function runMagentoProductPipeline(storeId) {
     total: rawProducts.length,
     success: 0,
     failed: 0,
+    duplicateProducts: 0,
+    missingBrands: 0,
+    missingSkus: 0,
+    unmatchedCategories: 0,
+    orphanOffers: 0,
+    invalidProducts: 0,
     duration: 0
   };
 
@@ -267,15 +344,25 @@ async function runMagentoProductPipeline(storeId) {
 
       await upsertRaw('magento', rawPayload);
 
-      const canonicalProduct = transformMagentoProduct(
+      let canonicalProduct = transformMagentoProduct(
         rawProduct,
         storeRecord,
         storeBaseUrl
       );
+      canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      if (!canonicalProduct?.brand) {
+        summary.missingBrands += 1;
+      }
+      if (!canonicalProduct?.sku) {
+        summary.missingSkus += 1;
+      }
+
       const isValid = validate(canonicalProduct);
 
       if (!isValid) {
         summary.failed += 1;
+        summary.invalidProducts += 1;
         logger.warn({
           message: 'Magento product validation failed',
           platform: 'magento',
@@ -284,6 +371,35 @@ async function runMagentoProductPipeline(storeId) {
           errors: validate.errors
         });
         continue;
+      }
+
+      const groupingKey = canonicalProduct?.groupingKey || null;
+      const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+      if (matchResult?.match) {
+        const isSameSource =
+          matchResult.match?.source === canonicalProduct?.source &&
+          matchResult.match?.sourceId === canonicalProduct?.sourceId;
+        if (!isSameSource) {
+          summary.duplicateProducts += 1;
+        }
+        logger.info({
+          message: 'Existing canonical product matched',
+          platform: 'magento',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey,
+          matchType: matchResult.matchType,
+          canonicalProductId: matchResult.match?.id || null
+        });
+        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+      } else {
+        logger.info({
+          message: 'New canonical product created',
+          platform: 'magento',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey
+        });
       }
 
       await upsertProduct(canonicalProduct);
@@ -323,6 +439,8 @@ async function runMagentoProductPipeline(storeId) {
           sourceId: offerRecord?.sourceId || null,
           variantId: offerRecord?.variantId || null
         });
+      } else {
+        summary.orphanOffers += 1;
       }
 
       summary.success += 1;
@@ -374,6 +492,12 @@ async function runWooProductPipeline(storeId) {
     total: rawProducts.length,
     success: 0,
     failed: 0,
+    duplicateProducts: 0,
+    missingBrands: 0,
+    missingSkus: 0,
+    unmatchedCategories: 0,
+    orphanOffers: 0,
+    invalidProducts: 0,
     duration: 0
   };
 
@@ -390,11 +514,21 @@ async function runWooProductPipeline(storeId) {
 
       await upsertRaw('woocommerce', rawPayload);
 
-      const canonicalProduct = transformWooProduct(rawProduct, pipelineStoreId);
+      let canonicalProduct = transformWooProduct(rawProduct, pipelineStoreId);
+      canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      if (!canonicalProduct?.brand) {
+        summary.missingBrands += 1;
+      }
+      if (!canonicalProduct?.sku) {
+        summary.missingSkus += 1;
+      }
+
       const isValid = validate(canonicalProduct);
 
       if (!isValid) {
         summary.failed += 1;
+        summary.invalidProducts += 1;
         logger.warn({
           message: 'WooCommerce product validation failed',
           platform: 'woocommerce',
@@ -403,6 +537,35 @@ async function runWooProductPipeline(storeId) {
           errors: validate.errors
         });
         continue;
+      }
+
+      const groupingKey = canonicalProduct?.groupingKey || null;
+      const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+      if (matchResult?.match) {
+        const isSameSource =
+          matchResult.match?.source === canonicalProduct?.source &&
+          matchResult.match?.sourceId === canonicalProduct?.sourceId;
+        if (!isSameSource) {
+          summary.duplicateProducts += 1;
+        }
+        logger.info({
+          message: 'Existing canonical product matched',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey,
+          matchType: matchResult.matchType,
+          canonicalProductId: matchResult.match?.id || null
+        });
+        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+      } else {
+        logger.info({
+          message: 'New canonical product created',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey
+        });
       }
 
       await upsertProduct(canonicalProduct);
@@ -451,6 +614,8 @@ async function runWooProductPipeline(storeId) {
           sourceId: offerRecord?.sourceId || null,
           variantId: offerRecord?.variantId || null
         });
+      } else {
+        summary.orphanOffers += 1;
       }
 
       summary.success += 1;
@@ -517,11 +682,22 @@ async function runBigCommerceProductPipeline(storeId) {
       .filter((category) => category?.sourceId && category?.id)
       .map((category) => [String(category.sourceId), category.id])
   );
+  const categoryIdSet = new Set(
+    categories
+      .map((category) => category?.id)
+      .filter(Boolean)
+  );
 
   const summary = {
     total: rawProducts.length,
     success: 0,
     failed: 0,
+    duplicateProducts: 0,
+    missingBrands: 0,
+    missingSkus: 0,
+    unmatchedCategories: 0,
+    orphanOffers: 0,
+    invalidProducts: 0,
     duration: 0
   };
 
@@ -538,14 +714,24 @@ async function runBigCommerceProductPipeline(storeId) {
 
       await upsertRaw('bigcommerce', rawPayload);
 
-      const canonicalProduct = transformBigCommerceProduct(rawProduct, pipelineStoreId, {
+      let canonicalProduct = transformBigCommerceProduct(rawProduct, pipelineStoreId, {
         categoryIdMap,
         brandMap
       });
+      canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      if (!canonicalProduct?.brand) {
+        summary.missingBrands += 1;
+      }
+      if (!canonicalProduct?.sku) {
+        summary.missingSkus += 1;
+      }
+
       const isValid = validate(canonicalProduct);
 
       if (!isValid) {
         summary.failed += 1;
+        summary.invalidProducts += 1;
         logger.warn({
           message: 'BigCommerce product validation failed',
           platform: 'bigcommerce',
@@ -554,6 +740,35 @@ async function runBigCommerceProductPipeline(storeId) {
           errors: validate.errors
         });
         continue;
+      }
+
+      const groupingKey = canonicalProduct?.groupingKey || null;
+      const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+      if (matchResult?.match) {
+        const isSameSource =
+          matchResult.match?.source === canonicalProduct?.source &&
+          matchResult.match?.sourceId === canonicalProduct?.sourceId;
+        if (!isSameSource) {
+          summary.duplicateProducts += 1;
+        }
+        logger.info({
+          message: 'Existing canonical product matched',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey,
+          matchType: matchResult.matchType,
+          canonicalProductId: matchResult.match?.id || null
+        });
+        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+      } else {
+        logger.info({
+          message: 'New canonical product created',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sku: canonicalProduct?.sku || null,
+          groupingKey
+        });
       }
 
       await upsertProduct(canonicalProduct);
@@ -615,6 +830,8 @@ async function runBigCommerceProductPipeline(storeId) {
           sourceId: offerRecord?.sourceId || null,
           variantId: offerRecord?.variantId || null
         });
+      } else {
+        summary.orphanOffers += 1;
       }
 
       summary.success += 1;

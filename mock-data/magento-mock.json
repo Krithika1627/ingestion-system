@@ -3,7 +3,7 @@
     "items": [
       {
         "id": 1,
-        "sku": "MOCK-AZK-0001",
+        "sku": "MOCK-PQB-0001",
         "name": "Theory Rule",
         "price": 3363.98,
         "status": 1,
@@ -47,7 +47,7 @@
             "types": [
               "image"
             ],
-            "file": "/m/o/MOCK-AZK-0001.jpg"
+            "file": "/m/o/MOCK-PQB-0001.jpg"
           },
           {
             "id": 105,
@@ -58,7 +58,7 @@
             "types": [
               "image"
             ],
-            "file": "/m/o/MOCK-AZK-0001.jpg"
+            "file": "/m/o/MOCK-PQB-0001.jpg"
           }
         ]
       },

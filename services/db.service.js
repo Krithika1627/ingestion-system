@@ -342,6 +342,52 @@ async function getProductsByStoreAndSource(storeId, source) {
 }
 
 /**
+ * Find a product by storeId and SKU.
+ * @param {string} storeId
+ * @param {string} sku
+ * @returns {Promise<object|null>}
+ */
+async function findProductBySku(sku) {
+  await connectDB();
+
+  const normalizedSku = typeof sku === 'string' ? sku.trim() : '';
+  if (!normalizedSku) {
+    logger.warn({
+      message: 'Missing storeId or sku for product lookup',
+      service: 'db',
+      sku: normalizedSku || null
+    });
+    return null;
+  }
+
+  const collection = getCollection('products');
+  return collection.findOne({ sku: normalizedSku });
+}
+
+/**
+ * Find a product by storeId and grouping key.
+ * @param {string} storeId
+ * @param {string} groupingKey
+ * @returns {Promise<object|null>}
+ */
+async function findProductByGroupingKey(groupingKey) {
+  await connectDB();
+
+  const normalizedKey = typeof groupingKey === 'string' ? groupingKey.trim() : '';
+  if (!normalizedKey) {
+    logger.warn({
+      message: 'Missing storeId or groupingKey for product lookup',
+      service: 'db',
+      groupingKey: normalizedKey || null
+    });
+    return null;
+  }
+
+  const collection = getCollection('products');
+  return collection.findOne({ groupingKey: normalizedKey });
+}
+
+/**
  * Replace a product's categoryIds with canonical UUIDs.
  * @param {string} productSourceId
  * @param {string} storeId
@@ -504,6 +550,8 @@ module.exports = {
   getStoreById,
   getCategoryBySourceId,
   getProductsByStoreAndSource,
+  findProductBySku,
+  findProductByGroupingKey,
   updateProductCategoryIds,
   updateOfferInventory,
   getRawResponsesByPlatform,
