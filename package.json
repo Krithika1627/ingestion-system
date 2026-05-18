@@ -7,12 +7,10 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "lint": "eslint .",
     "format": "prettier --write .",
-    
     "setup-indexes": "node scripts/setup-indexes.js",
     "seed-stores": "node scripts/seed-stores.js",
     "sync-shopify": "curl -X POST http://localhost:3000/sync/shopify",
     "sync-magento": "curl -X POST http://localhost:3000/sync/magento"
-
   },
   "repository": {
     "type": "git",
@@ -29,9 +27,12 @@
     "ajv": "^8.17.1",
     "ajv-formats": "^3.0.1",
     "axios": "^1.16.0",
+    "cheerio": "^1.2.0",
     "dotenv": "^16.6.0",
     "express": "^5.2.1",
+    "fast-xml-parser": "^5.8.0",
     "mongoose": "^9.6.1",
+    "playwright": "^1.60.0",
     "winston": "^3.19.0"
   },
   "devDependencies": {
