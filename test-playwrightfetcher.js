@@ -10,6 +10,7 @@ async function debug() {
   // Print the first og: tag found
   const match = html.match(/<meta[^>]+og:[^>]+>/g);
   console.log('OG tags found:', match?.slice(0, 5));
+  process.exit(0);
 }
 
 debug();

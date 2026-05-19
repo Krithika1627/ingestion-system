@@ -6,6 +6,7 @@ async function test() {
   const html = await fetchRenderedHTML(url);
   const product = await extractProductData(html, url);
   console.log(JSON.stringify(product, null, 2));
+  process.exit(0);
 }
 
 test();

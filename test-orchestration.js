@@ -5,7 +5,6 @@ async function test() {
   console.log(`Scraped ${products.length} products`);
   console.log('Sample product:', JSON.stringify(products[0], null, 2));
   
-  // Check how many had complete data
   const complete = products.filter(
     p =>
       p.title &&
