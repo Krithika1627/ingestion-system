@@ -3,6 +3,7 @@ const { fetchRenderedHTML } = require('./playwright.service');
 const { extractProductData } = require('./extractor.service');
 const { getSitemapUrls } = require('./sitemap.crawler');
 const { getProductUrlsFromListing } = require('./listing.crawler');
+const { runScraperProductPipeline } = require('./scraper.pipeline');
 
 const TEST_SCRAPE_LIMIT = 10;
 
@@ -44,7 +45,8 @@ async function crawlListingPages(storeUrl, maxPages = 10) {
   return Array.from(urls);
 }
 
-async function scrapeStore(storeUrl) {
+async function scrapeStore(storeUrl, storeId) {
+  const pipelineStoreId = storeId || process.env.SCRAPER_STORE_ID || null;
   logger.info({
     message: 'Scrape started',
     service: 'scraper',
@@ -77,6 +79,7 @@ async function scrapeStore(storeUrl) {
     limitedCount: limitedUrls.length
   });
   const results = [];
+  const scrapedItems = [];
 
   for (let index = 0; index < limitedUrls.length; index += 1) {
     const productUrl = limitedUrls[index];
@@ -90,6 +93,7 @@ async function scrapeStore(storeUrl) {
 
       if (product) {
         results.push(product);
+        scrapedItems.push({ product, rawHtml: html, url: productUrl });
         logger.info({
           message: 'Product scraped',
           service: 'scraper',
@@ -120,6 +124,16 @@ async function scrapeStore(storeUrl) {
     total: limitedUrls.length,
     success: results.length
   });
+
+  if (pipelineStoreId) {
+    await runScraperProductPipeline(scrapedItems, pipelineStoreId);
+  } else {
+    logger.warn({
+      message: 'Skipping scraper persistence due to missing storeId',
+      service: 'scraper',
+      url: storeUrl
+    });
+  }
 
   return results;
 }

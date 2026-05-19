@@ -3,6 +3,8 @@ const mongoose = require('mongoose');
 const logger = require('../logger.service');
 const { connectDB } = require('../db.service');
 const { normalizePrice } = require('./price.normalizer');
+const { normalizeAvailability } = require('./availability.normalizer');
+const { generateSelectors } = require('./ai.selector');
 
 const SelectorCacheSchema = new mongoose.Schema(
   {
@@ -33,23 +35,20 @@ const GENERIC_PHRASES = [
   'all rights reserved'
 ];
 
-function normalizeAvailability(value) {
-  if (!value) {
-    return null;
-  }
+const LOG_FIELDS = [
+  'title',
+  'description',
+  'brand',
+  'category',
+  'images',
+  'variants',
+  'price',
+  'currency',
+  'sku',
+  'cleanedTitle',
+  'normalizedBrand'
+];
 
-  const normalized = String(value).toLowerCase();
-  if (normalized.includes('outofstock') || normalized.includes('out_of_stock')) {
-    return 'out_of_stock';
-  }
-  if (normalized.includes('preorder')) {
-    return 'preorder';
-  }
-  if (normalized.includes('instock') || normalized.includes('in_stock')) {
-    return 'in_stock';
-  }
-  return normalized;
-}
 
 function getMetaContent($, key) {
   const metaByProperty = $(`meta[property="${key}"]`).attr('content');
@@ -121,7 +120,7 @@ function isLikelyProductExtraction(product) {
     return false;
   }
 
-  const hasPrice = Number.isFinite(product?.price);
+  const hasPrice = Number.isFinite(product?.price?.amount);
   const hasImages = Array.isArray(product?.images) && product.images.length > 0;
   if (!hasPrice && !hasImages) {
     return false;
@@ -183,6 +182,7 @@ function parseJsonLd($) {
         return product;
       }
     } catch (error) {
+      void error;
       continue;
     }
   }
@@ -190,7 +190,7 @@ function parseJsonLd($) {
   return null;
 }
 
-async function extractFromJsonLd(product, url) {
+async function extractFromJsonLd(product) {
   if (!product) {
     return null;
   }
@@ -206,32 +206,28 @@ async function extractFromJsonLd(product, url) {
   const normalizedPrice = await normalizePrice(rawPrice || '');
   const currency = rawCurrency || normalizedPrice.currency;
 
-  const availability = normalizeAvailability(offers?.availability || product?.availability || null);
+  const availability = normalizeAvailability(
+    offers?.availability || product?.availability || null
+  );
   const sku = product.sku || offers?.sku || product.productID || null;
   const images = normalizeImages(product.image || product.images || null);
+  const price = Number.isFinite(normalizedPrice.amount)
+    ? { amount: normalizedPrice.amount, currency }
+    : null;
 
   return {
-    id: null,
-    sourceId: url || null,
-    source: 'scraped',
-    storeId: null,
     title: product.name || null,
     description: product.description || null,
     brand: brand || null,
     category: product.category || null,
-    attributes: {},
     images,
-    variants: [],
-    price: normalizedPrice.amount,
-    currency,
+    price,
     availability,
-    sku: sku || null,
-    url: url || null,
-    lastSyncedAt: new Date().toISOString()
+    sku: sku || null
   };
 }
 
-async function extractFromOpenGraph($, url) {
+async function extractFromOpenGraph($) {
   const title = getMetaContent($, 'og:title');
   const description = getMetaContent($, 'og:description');
   const image = getMetaContent($, 'og:image');
@@ -250,29 +246,26 @@ async function extractFromOpenGraph($, url) {
   }
 
   const normalizedPrice = await normalizePrice(priceAmount || '');
+  const price = Number.isFinite(normalizedPrice.amount)
+    ? {
+        amount: normalizedPrice.amount,
+        currency: priceCurrency || normalizedPrice.currency
+      }
+    : null;
 
   return {
-    id: null,
-    sourceId: url || null,
-    source: 'scraped',
-    storeId: null,
     title: title || null,
     description: description || null,
     brand: null,
     category: null,
-    attributes: {},
     images: normalizeImages(image || null),
-    variants: [],
-    price: normalizedPrice.amount,
-    currency: priceCurrency || normalizedPrice.currency,
+    price,
     availability: normalizeAvailability(availability || null),
-    sku: null,
-    url: url || null,
-    lastSyncedAt: new Date().toISOString()
+    sku: null
   };
 }
 
-async function extractFromSelectors($, selectors, url) {
+async function extractFromSelectors($, selectors) {
   if (!selectors || typeof selectors !== 'object') {
     return null;
   }
@@ -310,26 +303,126 @@ async function extractFromSelectors($, selectors, url) {
   }
 
   const normalizedPrice = await normalizePrice(price || '');
+  const pricePayload = Number.isFinite(normalizedPrice.amount)
+    ? { amount: normalizedPrice.amount, currency: normalizedPrice.currency }
+    : null;
 
   return {
-    id: null,
-    sourceId: url || null,
-    source: 'scraped',
-    storeId: null,
     title: title || null,
     description: null,
     brand: null,
     category: null,
-    attributes: {},
     images,
-    variants: [],
-    price: normalizedPrice.amount,
-    currency: normalizedPrice.currency,
+    price: pricePayload,
     availability: normalizeAvailability(availability || null),
-    sku: null,
-    url: url || null,
-    lastSyncedAt: new Date().toISOString()
+    sku: null
   };
+}
+
+function cleanTitle(value) {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const cleaned = value
+    .replace(/<[^>]+>/g, '')
+    .replace(/[®™©]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned.length > 0 ? cleaned : null;
+}
+
+function normalizeBrandValue(value) {
+  if (!value) {
+    return null;
+  }
+  return String(value).toLowerCase().trim() || null;
+}
+
+function hasTitleAndPrice(extracted) {
+  const title = typeof extracted?.title === 'string' ? extracted.title.trim() : '';
+  const hasTitle = Boolean(title);
+  const amount = extracted?.price?.amount;
+  const hasPrice = Number.isFinite(amount);
+  return hasTitle && hasPrice;
+}
+
+function buildCanonicalProduct(extracted, url) {
+  const title = typeof extracted?.title === 'string' ? extracted.title.trim() : '';
+  const sourceId = url || null;
+  const sku = typeof extracted?.sku === 'string' ? extracted.sku.trim() : null;
+  const priceAmount = extracted?.price?.amount;
+  const currency = extracted?.price?.currency || 'USD';
+  const availability = extracted?.availability || 'unknown';
+  const isInStock = availability === 'in_stock' || availability === 'limited_stock';
+
+  return {
+    id: null,
+    sourceId,
+    source: 'scraped',
+    storeId: null,
+    sku,
+    title,
+    description: extracted?.description || null,
+    brand: extracted?.brand || null,
+    category: extracted?.category || null,
+    productType: 'unknown',
+    tags: [],
+    status: 'active',
+    weight: null,
+    images: Array.isArray(extracted?.images) ? extracted.images : [],
+    attributes: {},
+    variants: [
+      {
+        variantId: sku || sourceId,
+        title: null,
+        sku: sku || null,
+        price: Number.isFinite(priceAmount) ? priceAmount : 0,
+        compareAtPrice: null,
+        currency,
+        inventoryQty: null,
+        isInStock
+      }
+    ],
+    categoryIds: [],
+    createdAt: null,
+    updatedAt: null,
+    lastSyncedAt: new Date().toISOString(),
+    cleanedTitle: cleanTitle(title),
+    normalizedBrand: normalizeBrandValue(extracted?.brand),
+    pricePerUnit: null
+  };
+}
+
+function getFieldStatus(product) {
+  const variant = product?.variants?.[0] || null;
+  const fields = {
+    title: product?.title || null,
+    description: product?.description || null,
+    brand: product?.brand || null,
+    category: product?.category || null,
+    images: Array.isArray(product?.images) && product.images.length > 0 ? product.images : null,
+    variants: Array.isArray(product?.variants) && product.variants.length > 0 ? product.variants : null,
+    price: Number.isFinite(variant?.price) ? variant.price : null,
+    currency: variant?.currency || null,
+    sku: product?.sku || null,
+    cleanedTitle: product?.cleanedTitle || null,
+    normalizedBrand: product?.normalizedBrand || null
+  };
+
+  const fieldsFound = [];
+  const fieldsMissing = [];
+
+  Object.entries(fields).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === '') {
+      fieldsMissing.push(key);
+    } else {
+      fieldsFound.push(key);
+    }
+  });
+
+  return { fieldsFound, fieldsMissing };
 }
 
 async function loadSelectorCache(url) {
@@ -350,81 +443,97 @@ async function loadSelectorCache(url) {
 }
 
 async function extractProductData(html, url) {
+  const timestamp = new Date().toISOString();
+  let domain = null;
+  let extractionSource = 'failed';
+
   try {
+    if (url) {
+      try {
+        domain = new URL(url).hostname;
+      } catch (error) {
+        void error;
+        domain = null;
+      }
+    }
     const $ = cheerio.load(html || '');
+    let extracted = null;
 
     const jsonLdProduct = parseJsonLd($);
     if (jsonLdProduct) {
-      const product = await extractFromJsonLd(jsonLdProduct, url);
-      if (!isLikelyProductExtraction(product)) {
-        logger.warn({
-          message: 'Low quality extraction detected',
-          service: 'scraper',
-          extractionLevel: 'json-ld',
-          url
-        });
-        return { product: null, needsAiSelectors: true };
+      const product = await extractFromJsonLd(jsonLdProduct);
+      if (product && hasTitleAndPrice(product) && isLikelyProductExtraction(product)) {
+        extracted = product;
+        extractionSource = 'json-ld';
       }
-      logger.info({
-        message: 'Extraction successful',
-        service: 'scraper',
-        extractionLevel: 'json-ld',
-        url
-      });
-      return { product, needsAiSelectors: false };
     }
 
-    const ogProduct = await extractFromOpenGraph($, url);
-    if (ogProduct) {
-      if (!isLikelyProductExtraction(ogProduct)) {
-        logger.warn({
-          message: 'Low quality extraction detected',
-          service: 'scraper',
-          extractionLevel: 'open-graph',
-          url
-        });
-        return { product: null, needsAiSelectors: true };
+    if (!extracted) {
+      const ogProduct = await extractFromOpenGraph($);
+      if (ogProduct && hasTitleAndPrice(ogProduct) && isLikelyProductExtraction(ogProduct)) {
+        extracted = ogProduct;
+        extractionSource = 'open-graph';
       }
-      logger.info({
-        message: 'Extraction successful',
-        service: 'scraper',
-        extractionLevel: 'open-graph',
-        url
-      });
-      return { product: ogProduct, needsAiSelectors: false };
     }
 
-    const selectors = await loadSelectorCache(url);
-    if (selectors) {
-      const selectorProduct = await extractFromSelectors($, selectors, url);
-      if (selectorProduct) {
-        if (!isLikelyProductExtraction(selectorProduct)) {
-          logger.warn({
-            message: 'Low quality extraction detected',
-            service: 'scraper',
-            extractionLevel: 'cached-selectors',
-            url
-          });
-          return { product: null, needsAiSelectors: true };
+    if (!extracted) {
+      const selectors = await loadSelectorCache(url);
+      if (selectors) {
+        const selectorProduct = await extractFromSelectors($, selectors);
+        if (
+          selectorProduct &&
+          hasTitleAndPrice(selectorProduct) &&
+          isLikelyProductExtraction(selectorProduct)
+        ) {
+          extracted = selectorProduct;
+          extractionSource = 'cached-selectors';
         }
-        logger.info({
-          message: 'Extraction successful',
-          service: 'scraper',
-          extractionLevel: 'cached-selectors',
-          url
-        });
-        return { product: selectorProduct, needsAiSelectors: false };
       }
     }
 
-    // TODO: Plug in AI selector generation for unknown layouts.
-    logger.warn({
-      message: 'Extraction failed',
-      service: 'scraper',
-      extractionLevel: 'failed',
-      url
+    if (!extracted) {
+      const aiSelectors = await generateSelectors(html, url);
+      if (aiSelectors) {
+        const aiProduct = await extractFromSelectors($, aiSelectors);
+        if (aiProduct && hasTitleAndPrice(aiProduct) && isLikelyProductExtraction(aiProduct)) {
+          extracted = aiProduct;
+          extractionSource = 'ai-generated';
+        }
+      }
+    }
+
+    if (!extracted) {
+      logger.warn({
+        message: 'Extraction failed',
+        service: 'scraper',
+        url,
+        domain,
+        timestamp,
+        reason: 'all extraction methods failed'
+      });
+      logger.warn({
+        url,
+        domain,
+        source: 'failed',
+        fieldsFound: [],
+        fieldsMissing: [...LOG_FIELDS],
+        timestamp
+      });
+      return { product: null, needsAiSelectors: true };
+    }
+
+    const canonicalProduct = buildCanonicalProduct(extracted, url);
+    const { fieldsFound, fieldsMissing } = getFieldStatus(canonicalProduct);
+    logger.info({
+      url,
+      domain,
+      source: extractionSource,
+      fieldsFound,
+      fieldsMissing,
+      timestamp
     });
-    return { product: null, needsAiSelectors: true };
+
+    return { product: canonicalProduct, needsAiSelectors: false };
   } catch (error) {
     logger.error({
       message: 'Product extraction failed',
@@ -433,10 +542,12 @@ async function extractProductData(html, url) {
       error: error?.message || String(error)
     });
     logger.warn({
-      message: 'Extraction failed',
-      service: 'scraper',
-      extractionLevel: 'failed',
-      url
+      url,
+      domain,
+      source: 'failed',
+      fieldsFound: [],
+      fieldsMissing: [...LOG_FIELDS],
+      timestamp
     });
     return { product: null, needsAiSelectors: true };
   }

@@ -1,0 +1,217 @@
+const Ajv = require('ajv');
+const addFormats = require('ajv-formats');
+const logger = require('../logger.service');
+const { randomUUID } = require('crypto');
+const {
+  connectDB,
+  upsertProduct,
+  upsertOffer,
+  upsertRaw,
+  getRawResponseBySourceId
+} = require('../db.service');
+const {
+  buildGroupingKey,
+  findExistingProductMatch,
+  mergeMatchedProduct
+} = require('../product-matching.service');
+const productSchema = require('../../schemas/product.schema.json');
+
+const ajv = new Ajv({ strict: false });
+addFormats(ajv);
+const validate = ajv.compile(productSchema);
+
+function getAvailabilityFromVariant(variant) {
+  if (typeof variant?.inventoryQty === 'number') {
+    return variant.inventoryQty > 0 ? 'in_stock' : 'out_of_stock';
+  }
+  return variant?.isInStock ? 'in_stock' : 'out_of_stock';
+}
+
+function buildOfferFromVariant(product, variant) {
+  return {
+    sourceId: product?.sourceId || null,
+    storeId: product?.storeId || null,
+    variantId: variant?.variantId || null,
+    sku: variant?.sku ?? product?.sku ?? null,
+    price: variant?.price ?? null,
+    compareAtPrice: variant?.compareAtPrice ?? null,
+    currency: variant?.currency ?? null,
+    inventoryQty: variant?.inventoryQty ?? null,
+    isInStock: variant?.isInStock ?? false,
+    availability: getAvailabilityFromVariant(variant),
+    source: product?.source || 'scraped',
+    lastSyncedAt: product?.lastSyncedAt || new Date().toISOString()
+  };
+}
+
+async function persistRawHtmlIfMissing(product, rawHtml) {
+  if (!product?.sourceId || !rawHtml) {
+    return false;
+  }
+
+  const existing = await getRawResponseBySourceId(
+    'scraped',
+    product.sourceId,
+    product.storeId
+  );
+  if (existing) {
+    return false;
+  }
+
+  await upsertRaw('scraped', {
+    sourceId: product.sourceId,
+    storeId: product.storeId,
+    data: {
+      url: product.sourceId,
+      html: rawHtml
+    }
+  });
+
+  return true;
+}
+
+async function runScraperProductPipeline(products, storeId) {
+  const startTime = Date.now();
+  const items = Array.isArray(products) ? products : [];
+
+  await connectDB();
+
+  const summary = {
+    total: items.length,
+    success: 0,
+    failed: 0,
+    duplicateProducts: 0,
+    invalidProducts: 0,
+    offersCreated: 0,
+    duration: 0
+  };
+
+  for (const item of items) {
+    const productInput = item?.product || item;
+    const rawHtml = item?.rawHtml || item?.html || null;
+
+    if (!productInput) {
+      summary.failed += 1;
+      continue;
+    }
+
+    try {
+      let canonicalProduct = {
+        ...productInput,
+        storeId: storeId || productInput?.storeId || null,
+        source: 'scraped',
+        lastSyncedAt: new Date().toISOString()
+      };
+      if (!canonicalProduct.id) {
+        canonicalProduct.id = randomUUID();
+      }
+
+      canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      const isValid = validate(canonicalProduct);
+      if (!isValid) {
+        summary.failed += 1;
+        summary.invalidProducts += 1;
+        logger.warn({
+          message: 'Scraped product validation failed',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null,
+          errors: validate.errors
+        });
+        continue;
+      }
+
+      const matchResult = await findExistingProductMatch(
+        canonicalProduct?.storeId,
+        canonicalProduct
+      );
+      if (matchResult?.match) {
+        const isSameSource =
+          matchResult.match?.source === canonicalProduct?.source &&
+          matchResult.match?.sourceId === canonicalProduct?.sourceId;
+        if (!isSameSource) {
+          summary.duplicateProducts += 1;
+        }
+        logger.info({
+          message: 'Existing canonical product matched',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null,
+          matchType: matchResult.matchType,
+          canonicalProductId: matchResult.match?.id || null
+        });
+        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+      }
+
+      await upsertProduct(canonicalProduct);
+      logger.info({
+        message: 'Scraped product upserted',
+        platform: 'scraped',
+        storeId: canonicalProduct?.storeId || null,
+        sourceId: canonicalProduct?.sourceId || null
+      });
+
+      const rawPersisted = await persistRawHtmlIfMissing(canonicalProduct, rawHtml);
+      if (rawPersisted) {
+        logger.info({
+          message: 'Scraped raw payload persisted',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      const variants = Array.isArray(canonicalProduct?.variants)
+        ? canonicalProduct.variants
+        : [];
+
+      if (variants.length === 0) {
+        logger.warn({
+          message: 'Scraped product missing variants',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      for (const variant of variants) {
+        const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+        const upserted = await upsertOffer(offerRecord);
+        if (upserted) {
+          summary.offersCreated += 1;
+          logger.info({
+            message: 'Scraped offer upserted',
+            platform: 'scraped',
+            storeId: canonicalProduct?.storeId || null,
+            sourceId: offerRecord?.sourceId || null,
+            variantId: offerRecord?.variantId || null
+          });
+        }
+      }
+
+      summary.success += 1;
+    } catch (error) {
+      summary.failed += 1;
+      logger.error({
+        message: 'Scraped product pipeline error',
+        platform: 'scraped',
+        storeId: storeId || null,
+        sourceId: productInput?.sourceId || null,
+        error: error?.message || String(error)
+      });
+    }
+  }
+
+  summary.duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
+  logger.info({
+    message: 'Scraped product pipeline complete',
+    platform: 'scraped',
+    storeId: storeId || null,
+    ...summary
+  });
+
+  return summary;
+}
+
+module.exports = { runScraperProductPipeline };

@@ -208,6 +208,31 @@ async function getRawResponsesByPlatform(platform, storeId) {
 }
 
 /**
+ * Get a raw response by platform and sourceId.
+ * @param {string} platform
+ * @param {string} sourceId
+ * @param {string} [storeId]
+ * @returns {Promise<object|null>}
+ */
+async function getRawResponseBySourceId(platform, sourceId, storeId) {
+  await connectDB();
+
+  if (!platform || !sourceId) {
+    logger.warn({
+      message: 'Missing platform or sourceId for raw response lookup',
+      service: 'db',
+      platform: platform || null,
+      sourceId: sourceId || null
+    });
+    return null;
+  }
+
+  const collection = getCollection('raw_responses');
+  const filter = storeId ? { platform, sourceId, storeId } : { platform, sourceId };
+  return collection.findOne(filter);
+}
+
+/**
  * Add a categoryId to a product's categoryIds array (no duplicates).
  * @param {string} productSourceId
  * @param {string} categoryId
@@ -555,6 +580,7 @@ module.exports = {
   updateProductCategoryIds,
   updateOfferInventory,
   getRawResponsesByPlatform,
+  getRawResponseBySourceId,
   addCategoryIdToProduct,
   updateStoreLastSynced
 };
