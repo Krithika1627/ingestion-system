@@ -4,6 +4,7 @@ const { extractProductData } = require('./extractor.service');
 const { getSitemapUrls } = require('./sitemap.crawler');
 const { getProductUrlsFromListing } = require('./listing.crawler');
 const { runScraperProductPipeline } = require('./scraper.pipeline');
+const { fingerprintStore } = require('./store.fingerprint');
 
 const TEST_SCRAPE_LIMIT = 10;
 
@@ -46,7 +47,9 @@ async function crawlListingPages(storeUrl, maxPages = 10) {
 }
 
 async function scrapeStore(storeUrl, storeId) {
-  const pipelineStoreId = storeId || process.env.SCRAPER_STORE_ID || null;
+  const fingerprint = await fingerprintStore(storeUrl);
+  const pipelineStoreId =
+    fingerprint?.id || storeId || process.env.SCRAPER_STORE_ID || null;
   logger.info({
     message: 'Scrape started',
     service: 'scraper',
@@ -92,6 +95,9 @@ async function scrapeStore(storeUrl, storeId) {
       const { product, needsAiSelectors } = await extractProductData(html, productUrl);
 
       if (product) {
+        if (pipelineStoreId) {
+          product.storeId = pipelineStoreId;
+        }
         results.push(product);
         scrapedItems.push({ product, rawHtml: html, url: productUrl });
         logger.info({
