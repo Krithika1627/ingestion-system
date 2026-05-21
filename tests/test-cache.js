@@ -1,5 +1,5 @@
 // test-cache.js
-const { connectDB } = require('./services/db.service');
+const { connectDB } = require('../services/db.service');
 const mongoose = require('mongoose');
 require('dotenv').config();
 

@@ -1,4 +1,4 @@
-const { getSitemapUrls } = require('./services/scraper/sitemap.crawler');
+const { getSitemapUrls } = require('../services/scraper/sitemap.crawler');
 
 async function test() {
   const urls = await getSitemapUrls('https://mamaearth.in');

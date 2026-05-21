@@ -1,4 +1,4 @@
-const { fetchRenderedHTML } = require('./services/scraper/playwright.service');
+const { fetchRenderedHTML } = require('../services/scraper/playwright.service');
 
 async function debug() {
   const html = await fetchRenderedHTML('https://mamaearth.in/product/mineral-based-sunscreen-india');

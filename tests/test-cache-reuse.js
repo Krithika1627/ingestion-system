@@ -1,6 +1,6 @@
 // test-cache-reuse.js
-const { fetchRenderedHTML } = require('./services/scraper/playwright.service');
-const { extractProductData } = require('./services/scraper/extractor.service');
+const { fetchRenderedHTML } = require('../services/scraper/playwright.service');
+const { extractProductData } = require('../services/scraper/extractor.service');
 
 async function test() {
   const url = 'https://www.bewakoof.com/p/womens-orange-fresh-as-a-daisy-graphic-printed-boyfriend-t-shirt';

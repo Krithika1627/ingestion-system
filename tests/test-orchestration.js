@@ -1,4 +1,4 @@
-const { scrapeStore } = require('./services/scraper/scraper.orchestrator');
+const { scrapeStore } = require('../services/scraper/scraper.orchestrator');
 
 async function test() {
   const products = await scrapeStore('https://mamaearth.in', 'store_scraper_001', {

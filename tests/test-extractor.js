@@ -1,5 +1,5 @@
-const { fetchRenderedHTML } = require('./services/scraper/playwright.service');
-const { extractProductData } = require('./services/scraper/extractor.service');
+const { fetchRenderedHTML } = require('../services/scraper/playwright.service');
+const { extractProductData } = require('../services/scraper/extractor.service');
 
 async function test() {
   const url = 'https://mamaearth.in/product/mineral-based-sunscreen-india';

@@ -1,5 +1,5 @@
-const { generateSelectors } = require('./services/scraper/ai.selector');
-const { fetchRenderedHTML } = require('./services/scraper/playwright.service');
+const { generateSelectors } = require('../services/scraper/ai.selector');
+const { fetchRenderedHTML } = require('../services/scraper/playwright.service');
 
 async function test() {
   const url = 'https://www.bewakoof.com/p/womens-orange-fresh-as-a-daisy-graphic-printed-boyfriend-t-shirt';  

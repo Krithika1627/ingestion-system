@@ -1,4 +1,4 @@
-const { normalizePrice } = require('./services/scraper/price.normalizer');
+const { normalizePrice } = require('../services/scraper/price.normalizer');
 
 console.log(normalizePrice("₹1,299"));           // { amount: 1299, currency: "INR" }
 console.log(normalizePrice("$12.99"));           // { amount: 12.99, currency: "USD" }
