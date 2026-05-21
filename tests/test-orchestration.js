@@ -1,7 +1,10 @@
 const { scrapeStore } = require('./services/scraper/scraper.orchestrator');
 
 async function test() {
-  const products = await scrapeStore('https://mamaearth.in','store_scraper_001');
+  const products = await scrapeStore('https://mamaearth.in', 'store_scraper_001', {
+    maxProducts: 10  // add this limit
+  });
+  
   console.log(`Scraped ${products.length} products`);
   console.log('Sample product:', JSON.stringify(products[0], null, 2));
   

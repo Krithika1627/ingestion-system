@@ -2,7 +2,7 @@ const logger = require('../logger.service');
 const { fetchRenderedHTML } = require('./playwright.service');
 const { extractProductData } = require('./extractor.service');
 const { getSitemapUrls } = require('./sitemap.crawler');
-const { getProductUrlsFromListing } = require('./listing.crawler');
+const { crawlListingPages } = require('./listing.crawler');
 const { runScraperProductPipeline } = require('./scraper.pipeline');
 const { fingerprintStore } = require('./store.fingerprint');
 
@@ -16,40 +16,18 @@ function getDelayMs() {
   return 1000 + Math.floor(Math.random() * 1000);
 }
 
-async function crawlListingPages(storeUrl, maxPages = 10) {
-  const urls = new Set();
-  const visited = new Set();
-  let nextPage = storeUrl;
+async function scrapeStore(storeUrl, options) {
+  const isOptionsObject = options && typeof options === 'object';
+  const explicitStoreId = !isOptionsObject && typeof options === 'string'
+    ? options
+    : isOptionsObject
+      ? options.storeId
+      : null;
+  const listingOptions = isOptionsObject ? options : {};
 
-  while (nextPage && visited.size < maxPages) {
-    if (visited.has(nextPage)) {
-      break;
-    }
-    visited.add(nextPage);
-
-    try {
-      const html = await fetchRenderedHTML(nextPage);
-      const { productUrls, nextPageUrl } = await getProductUrlsFromListing(html, nextPage);
-      productUrls.forEach((url) => urls.add(url));
-      nextPage = nextPageUrl;
-    } catch (error) {
-      logger.warn({
-        message: 'Listing page crawl failed',
-        service: 'scraper',
-        url: nextPage,
-        error: error?.message || String(error)
-      });
-      break;
-    }
-  }
-
-  return Array.from(urls);
-}
-
-async function scrapeStore(storeUrl, storeId) {
   const fingerprint = await fingerprintStore(storeUrl);
   const pipelineStoreId =
-    fingerprint?.id || storeId || process.env.SCRAPER_STORE_ID || null;
+    fingerprint?.id || explicitStoreId || process.env.SCRAPER_STORE_ID || null;
   logger.info({
     message: 'Scrape started',
     service: 'scraper',
@@ -69,7 +47,22 @@ async function scrapeStore(storeUrl, storeId) {
   }
 
   if (productUrls.length === 0) {
-    productUrls = await crawlListingPages(storeUrl, 10);
+    logger.warn({
+      message: 'No sitemap found, falling back to listing crawler',
+      service: 'scraper',
+      url: storeUrl
+    });
+    const listingResult = await crawlListingPages(storeUrl, listingOptions);
+    productUrls = Array.isArray(listingResult) ? listingResult : [];
+  }
+
+  if (productUrls.length === 0) {
+    logger.warn({
+      message: 'Could not discover product URLs for this store',
+      service: 'scraper',
+      url: storeUrl
+    });
+    return [];
   }
 
   const uniqueProductUrls = Array.from(new Set(productUrls));

@@ -120,7 +120,14 @@ async function upsertOffer(offerRecord) {
     { projection: { id: 1 } }
   );
 
-  if (!product?.id) {
+  const payload = {
+    ...offerRecord,
+    id: offerRecord?.id || randomUUID(),
+    productId: product?.id || offerRecord?.productId || null
+  };
+  delete payload.title;
+
+  if (!payload.productId) {
     logger.warn({
       message: 'Offer productId missing for sourceId',
       service: 'db',
@@ -128,13 +135,6 @@ async function upsertOffer(offerRecord) {
       storeId: offerRecord.storeId
     });
   }
-
-  const payload = {
-    ...offerRecord,
-    id: offerRecord?.id || randomUUID(),
-    productId: product?.id || null
-  };
-  delete payload.title;
 
   const collection = getCollection('offers');
   await collection.updateOne(

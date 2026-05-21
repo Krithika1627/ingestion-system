@@ -1,7 +1,7 @@
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const logger = require('../logger.service');
-const { randomUUID } = require('crypto');
+const { randomBytes } = require('crypto');
 const {
   connectDB,
   upsertProduct,
@@ -14,6 +14,7 @@ const {
   findExistingProductMatch,
   mergeMatchedProduct
 } = require('../product-matching.service');
+const { findDuplicates } = require('../deduplication/dedup.service');
 const productSchema = require('../../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -31,6 +32,7 @@ function buildOfferFromVariant(product, variant) {
   return {
     sourceId: product?.sourceId || null,
     storeId: product?.storeId || null,
+    productId: product?.id || null,
     variantId: variant?.variantId || null,
     sku: variant?.sku ?? product?.sku ?? null,
     price: variant?.price ?? null,
@@ -42,6 +44,21 @@ function buildOfferFromVariant(product, variant) {
     source: product?.source || 'scraped',
     lastSyncedAt: product?.lastSyncedAt || new Date().toISOString()
   };
+}
+
+const ID_ALPHABET = '0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ';
+
+function generateNanoId(size = 16) {
+  const bytes = randomBytes(size);
+  let output = '';
+  for (let i = 0; i < bytes.length; i += 1) {
+    output += ID_ALPHABET[bytes[i] % ID_ALPHABET.length];
+  }
+  return output;
+}
+
+function generateProductId() {
+  return `prod_${generateNanoId(16)}`;
 }
 
 async function persistRawHtmlIfMissing(product, rawHtml) {
@@ -102,11 +119,11 @@ async function runScraperProductPipeline(products, storeId) {
         source: 'scraped',
         lastSyncedAt: new Date().toISOString()
       };
-      if (!canonicalProduct.id) {
-        canonicalProduct.id = randomUUID();
-      }
-
       canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+      if (!canonicalProduct.id) {
+        canonicalProduct.id = generateProductId();
+      }
 
       const isValid = validate(canonicalProduct);
       if (!isValid) {
@@ -122,35 +139,56 @@ async function runScraperProductPipeline(products, storeId) {
         continue;
       }
 
-      const matchResult = await findExistingProductMatch(
-        canonicalProduct?.storeId,
-        canonicalProduct
-      );
-      if (matchResult?.match) {
-        const isSameSource =
-          matchResult.match?.source === canonicalProduct?.source &&
-          matchResult.match?.sourceId === canonicalProduct?.sourceId;
-        if (!isSameSource) {
-          summary.duplicateProducts += 1;
-        }
+      const dedupResult = await findDuplicates(canonicalProduct);
+      const isDuplicate = Boolean(dedupResult?.isDuplicate && dedupResult?.matchedProductId);
+      if (isDuplicate) {
+        summary.duplicateProducts += 1;
+        canonicalProduct.id = dedupResult.matchedProductId;
         logger.info({
-          message: 'Existing canonical product matched',
+          message: 'Duplicate product matched',
           platform: 'scraped',
           storeId: canonicalProduct?.storeId || null,
           sourceId: canonicalProduct?.sourceId || null,
-          matchType: matchResult.matchType,
-          canonicalProductId: matchResult.match?.id || null
+          matchedSourceId: dedupResult.matchedSourceId || null,
+          confidence: dedupResult.confidence || null
         });
-        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
       }
 
-      await upsertProduct(canonicalProduct);
-      logger.info({
-        message: 'Scraped product upserted',
-        platform: 'scraped',
-        storeId: canonicalProduct?.storeId || null,
-        sourceId: canonicalProduct?.sourceId || null
-      });
+      if (!isDuplicate) {
+        if (!canonicalProduct.id) {
+          canonicalProduct.id = generateProductId();
+        }
+
+        const matchResult = await findExistingProductMatch(
+          canonicalProduct?.storeId,
+          canonicalProduct
+        );
+        if (matchResult?.match) {
+          const isSameSource =
+            matchResult.match?.source === canonicalProduct?.source &&
+            matchResult.match?.sourceId === canonicalProduct?.sourceId;
+          if (!isSameSource) {
+            summary.duplicateProducts += 1;
+          }
+          logger.info({
+            message: 'Existing canonical product matched',
+            platform: 'scraped',
+            storeId: canonicalProduct?.storeId || null,
+            sourceId: canonicalProduct?.sourceId || null,
+            matchType: matchResult.matchType,
+            canonicalProductId: matchResult.match?.id || null
+          });
+          canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+        }
+
+        await upsertProduct(canonicalProduct);
+        logger.info({
+          message: 'Scraped product upserted',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
 
       const rawPersisted = await persistRawHtmlIfMissing(canonicalProduct, rawHtml);
       if (rawPersisted) {
