@@ -26,8 +26,36 @@ async function scrapeStore(storeUrl, options) {
   const listingOptions = isOptionsObject ? options : {};
 
   const fingerprint = await fingerprintStore(storeUrl);
+  const detectedPlatform = fingerprint?.platform || fingerprint?.detectedPlatform || 'unknown';
   const pipelineStoreId =
     fingerprint?.id || explicitStoreId || process.env.SCRAPER_STORE_ID || null;
+
+  const knownPlatforms = new Set(['shopify', 'magento', 'woocommerce', 'bigcommerce']);
+  if (knownPlatforms.has(detectedPlatform)) {
+    logger.warn({
+      message: 'Known platform detected via scraper — consider switching to API connector',
+      service: 'scraper',
+      url: storeUrl,
+      platform: detectedPlatform,
+      storeId: pipelineStoreId || null
+    });
+    logger.warn({
+      message: 'Known platform detected, scraper skipped. Use platform connector for this store.',
+      service: 'scraper',
+      url: storeUrl,
+      platform: detectedPlatform,
+      storeId: pipelineStoreId || null
+    });
+    return {
+      skipped: true,
+      reason: 'known_platform',
+      platform: detectedPlatform,
+      storeId: pipelineStoreId || null,
+      mode: 'api',
+      message: `Use ${detectedPlatform} API connector instead`
+    };
+  }
+
   logger.info({
     message: 'Scrape started',
     service: 'scraper',
