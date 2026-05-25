@@ -224,7 +224,7 @@ async function findDuplicates(incomingProduct) {
     const matches = [];
     for (const candidate of candidates) {
       const { score, signals } = scoreProductSimilarity(incomingProduct, candidate);
-      if (score >= 0.85) {
+      if (score >= 0.80) {
         matches.push({
           id: candidate?.id || null,
           sourceId: candidate?.sourceId || null,
