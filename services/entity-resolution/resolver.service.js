@@ -21,7 +21,7 @@ function scoreAttributeMatch(productA, productB) {
     }
 
     const separated = String(value).replace(/([0-9])([a-zA-Z])/g, '$1 $2');
-    const normalized = normalizeText(separated);
+    const normalized = separated.toLowerCase();
     const withoutUnits = normalized.replace(
       /\b(milliliter|liter|kilogram|gram|pieces|quantity|size)\b/g,
       ''
@@ -39,6 +39,7 @@ function scoreAttributeMatch(productA, productB) {
   if (!attrsA && !attrsB) {
     return 0.5;
   }
+
   if (!attrsA || !attrsB) {
     return 0.5;
   }
@@ -165,13 +166,19 @@ function scoreEntitySimilarity(productA, productB) {
 
 async function resolveProduct(incomingProduct) {
   const timestamp = new Date().toISOString();
+  const canonicalId =
+    typeof incomingProduct?.canonicalProductId === 'string' &&
+    incomingProduct.canonicalProductId.startsWith('cprod_')
+      ? incomingProduct.canonicalProductId
+      : null;
 
   try {
     if (!incomingProduct) {
       return {
         resolved: false,
         canonicalProductId: null,
-        canonicalSourceId: null,
+        matchedProductId: null,
+        matchedSourceId: null,
         confidence: null,
         hardMatch: null,
         signals: null,
@@ -182,12 +189,13 @@ async function resolveProduct(incomingProduct) {
 
     await connectDB();
     const collection = mongoose.connection.collection('products');
-    
-    if (incomingProduct?.canonicalProductId) {
+
+    if (canonicalId) {
       const resolvedResult = {
         resolved: true,
-        canonicalProductId: incomingProduct.canonicalProductId,
-        canonicalSourceId: incomingProduct?.sourceId || null,
+        canonicalProductId: canonicalId,
+        matchedProductId: null,
+        matchedSourceId: incomingProduct?.sourceId || null,
         confidence: 1,
         hardMatch: 'canonical',
         signals: null,
@@ -202,7 +210,7 @@ async function resolveProduct(incomingProduct) {
         resolved: true,
         confidence: 1,
         hardMatch: 'canonical',
-        canonicalProductId: incomingProduct.canonicalProductId,
+        canonicalProductId: canonicalId,
         timestamp
       });
 
@@ -229,7 +237,8 @@ async function resolveProduct(incomingProduct) {
         return {
           resolved: false,
           canonicalProductId: null,
-          canonicalSourceId: null,
+          matchedProductId: null,
+          matchedSourceId: null,
           confidence: null,
           hardMatch: null,
           signals: null,
@@ -283,24 +292,15 @@ async function resolveProduct(incomingProduct) {
 
     const result = {
       resolved: Boolean(best?.id),
-      canonicalProductId: best?.id || null,
-      canonicalSourceId: best?.sourceId || null,
+      canonicalProductId: null,
+      matchedProductId: best?.id || null,
+      matchedSourceId: best?.sourceId || null,
       confidence: best?.score || null,
       hardMatch: best?.hardMatch || null,
       signals: best?.signals || null,
       allMatches: matches,
       candidatesScored: candidates.length
     };
-
-    if (!result.resolved && incomingProduct?.id && incomingProduct?.sourceId) {
-      const filter = incomingProduct?.storeId
-        ? { sourceId: incomingProduct.sourceId, storeId: incomingProduct.storeId }
-        : { sourceId: incomingProduct.sourceId };
-      await collection.updateOne(
-        filter,
-        { $set: { canonicalProductId: incomingProduct.id } }
-      );
-    }
 
     logger.info({
       sourceId: incomingProduct?.sourceId || null,
@@ -310,6 +310,8 @@ async function resolveProduct(incomingProduct) {
       confidence: result.confidence,
       hardMatch: result.hardMatch,
       canonicalProductId: result.canonicalProductId,
+      matchedProductId: result.matchedProductId,
+      matchedSourceId: result.matchedSourceId,
       timestamp
     });
 
@@ -323,7 +325,8 @@ async function resolveProduct(incomingProduct) {
     return {
       resolved: false,
       canonicalProductId: null,
-      canonicalSourceId: null,
+      matchedProductId: null,
+      matchedSourceId: null,
       confidence: null,
       hardMatch: null,
       signals: null,
@@ -367,7 +370,7 @@ async function resolveAllProducts(options = {}) {
         confidenceSum += resolution.confidence || 0;
         results.push({
           sourceId: product?.sourceId || null,
-          canonicalProductId: resolution.canonicalProductId,
+          matchedProductId: resolution.matchedProductId,
           confidence: resolution.confidence
         });
       } else {
@@ -379,7 +382,7 @@ async function resolveAllProducts(options = {}) {
           message: 'Entity resolution match',
           service: 'entity-resolution',
           sourceId: product?.sourceId || null,
-          canonicalProductId: resolution.canonicalProductId,
+          matchedProductId: resolution.matchedProductId,
           confidence: resolution.confidence
         });
       }

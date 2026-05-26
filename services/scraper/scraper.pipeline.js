@@ -15,6 +15,10 @@ const {
   mergeMatchedProduct
 } = require('../product-matching.service');
 const { findDuplicates } = require('../deduplication/dedup.service');
+const {
+  getOrCreateCanonical,
+  mapSourceToCanonical
+} = require('../canonical/canonical.service');
 const productSchema = require('../../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -188,6 +192,27 @@ async function runScraperProductPipeline(products, storeId) {
           storeId: canonicalProduct?.storeId || null,
           sourceId: canonicalProduct?.sourceId || null
         });
+
+        const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+        if (canonicalResult?.canonical?.canonicalId) {
+          const mapping = await mapSourceToCanonical(
+            canonicalProduct,
+            canonicalResult.canonical.canonicalId
+          );
+          logger.info({
+            message: 'Canonical mapping complete',
+            platform: 'scraped',
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            success: mapping?.success === true
+          });
+        } else {
+          logger.warn({
+            message: 'Canonical mapping skipped',
+            platform: 'scraped',
+            sourceId: canonicalProduct?.sourceId || null
+          });
+        }
       }
 
       const rawPersisted = await persistRawHtmlIfMissing(canonicalProduct, rawHtml);
