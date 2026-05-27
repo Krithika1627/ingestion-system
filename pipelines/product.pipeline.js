@@ -26,6 +26,13 @@ const {
   getCategoriesByStore,
   getStoreById
 } = require('../services/db.service');
+const {
+  getOrCreateCanonical,
+  mapSourceToCanonical
+} = require('../services/canonical/canonical.service');
+const {
+  syncCanonicalPriceRange
+} = require('../services/offer-aggregation/offer.aggregation.service');
 const productSchema = require('../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -153,6 +160,9 @@ async function runShopifyProductPipeline(storeId) {
     unmatchedCategories: 0,
     orphanOffers: 0,
     invalidProducts: 0,
+    canonicalProductsMapped: 0,
+    canonicalSyncsFailed: 0,
+    priceRangeSyncDuration: 0,
     duration: 0
   };
 
@@ -228,6 +238,41 @@ async function runShopifyProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+        const mapping = await mapSourceToCanonical(
+          canonicalProduct,
+          canonicalResult.canonical.canonicalId
+        );
+
+        if (mapping?.success) {
+          summary.canonicalProductsMapped += 1;
+          logger.info({
+            message: 'Shopify canonical mapping complete',
+            platform: 'shopify',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        } else {
+          logger.warn({
+            message: 'Shopify canonical mapping failed',
+            platform: 'shopify',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+      } else {
+        logger.warn({
+          message: 'Shopify canonical mapping skipped',
+          platform: 'shopify',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
       const variants = Array.isArray(canonicalProduct?.variants)
         ? canonicalProduct.variants
         : [];
@@ -240,11 +285,13 @@ async function runShopifyProductPipeline(storeId) {
           sourceId: canonicalProduct?.sourceId || null
         });
       } else {
+        let offerUpsertsForProduct = 0;
         for (const variant of variants) {
           try {
             const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
             const upserted = await upsertOffer(offerRecord);
             if (upserted) {
+              offerUpsertsForProduct += 1;
               logger.info({
                 message: 'Shopify offer upserted',
                 platform: 'shopify',
@@ -262,6 +309,55 @@ async function runShopifyProductPipeline(storeId) {
               storeId: pipelineStoreId,
               sourceId: canonicalProduct?.sourceId || null,
               variantId: variant?.variantId || null,
+              error: error?.message || String(error)
+            });
+          }
+        }
+
+        if (canonicalProduct?.canonicalProductId && offerUpsertsForProduct > 0) {
+          const syncStart = Date.now();
+          try {
+            const priceRange = await syncCanonicalPriceRange(
+              canonicalProduct.canonicalProductId
+            );
+            const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+            summary.priceRangeSyncDuration += syncDuration;
+            const syncFailed =
+              !priceRange ||
+              (!Number.isFinite(priceRange.min) &&
+                !Number.isFinite(priceRange.max) &&
+                !priceRange.currency);
+
+            if (syncFailed) {
+              summary.canonicalSyncsFailed += 1;
+              logger.warn({
+                message: 'Shopify canonical price range sync returned empty range',
+                platform: 'shopify',
+                storeId: pipelineStoreId,
+                canonicalProductId: canonicalProduct.canonicalProductId,
+                priceRange,
+                duration: syncDuration
+              });
+            } else {
+              logger.info({
+                message: 'Shopify canonical price range synced',
+                platform: 'shopify',
+                storeId: pipelineStoreId,
+                canonicalProductId: canonicalProduct.canonicalProductId,
+                priceRange,
+                duration: syncDuration
+              });
+            }
+          } catch (error) {
+            const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+            summary.priceRangeSyncDuration += syncDuration;
+            summary.canonicalSyncsFailed += 1;
+            logger.warn({
+              message: 'Shopify canonical price range sync failed',
+              platform: 'shopify',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              duration: syncDuration,
               error: error?.message || String(error)
             });
           }
@@ -289,7 +385,10 @@ async function runShopifyProductPipeline(storeId) {
     total: summary.total,
     success: summary.success,
     failed: summary.failed,
-    duration: summary.duration
+    duration: summary.duration,
+    canonicalProductsMapped: summary.canonicalProductsMapped,
+    canonicalSyncsFailed: summary.canonicalSyncsFailed,
+    priceRangeSyncDuration: summary.priceRangeSyncDuration
   });
 
   return summary;
@@ -326,6 +425,9 @@ async function runMagentoProductPipeline(storeId) {
     unmatchedCategories: 0,
     orphanOffers: 0,
     invalidProducts: 0,
+    canonicalProductsMapped: 0,
+    canonicalSyncsFailed: 0,
+    priceRangeSyncDuration: 0,
     duration: 0
   };
 
@@ -410,6 +512,41 @@ async function runMagentoProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+        const mapping = await mapSourceToCanonical(
+          canonicalProduct,
+          canonicalResult.canonical.canonicalId
+        );
+
+        if (mapping?.success) {
+          summary.canonicalProductsMapped += 1;
+          logger.info({
+            message: 'Magento canonical mapping complete',
+            platform: 'magento',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        } else {
+          logger.warn({
+            message: 'Magento canonical mapping failed',
+            platform: 'magento',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+      } else {
+        logger.warn({
+          message: 'Magento canonical mapping skipped',
+          platform: 'magento',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
       const stockQty =
         typeof rawProduct?.extension_attributes?.stock_item?.qty === 'number'
           ? rawProduct.extension_attributes.stock_item.qty
@@ -431,6 +568,7 @@ async function runMagentoProductPipeline(storeId) {
       };
 
       const upserted = await upsertOffer(offerRecord);
+      const offerUpserted = Boolean(upserted);
       if (upserted) {
         logger.info({
           message: 'Magento offer upserted',
@@ -441,6 +579,55 @@ async function runMagentoProductPipeline(storeId) {
         });
       } else {
         summary.orphanOffers += 1;
+      }
+
+      if (canonicalProduct?.canonicalProductId && offerUpserted) {
+        const syncStart = Date.now();
+        try {
+          const priceRange = await syncCanonicalPriceRange(
+            canonicalProduct.canonicalProductId
+          );
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          const syncFailed =
+            !priceRange ||
+            (!Number.isFinite(priceRange.min) &&
+              !Number.isFinite(priceRange.max) &&
+              !priceRange.currency);
+
+          if (syncFailed) {
+            summary.canonicalSyncsFailed += 1;
+            logger.warn({
+              message: 'Magento canonical price range sync returned empty range',
+              platform: 'magento',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          } else {
+            logger.info({
+              message: 'Magento canonical price range synced',
+              platform: 'magento',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          }
+        } catch (error) {
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          summary.canonicalSyncsFailed += 1;
+          logger.warn({
+            message: 'Magento canonical price range sync failed',
+            platform: 'magento',
+            storeId: pipelineStoreId,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            duration: syncDuration,
+            error: error?.message || String(error)
+          });
+        }
       }
 
       summary.success += 1;
@@ -464,7 +651,10 @@ async function runMagentoProductPipeline(storeId) {
     total: summary.total,
     success: summary.success,
     failed: summary.failed,
-    duration: summary.duration
+    duration: summary.duration,
+    canonicalProductsMapped: summary.canonicalProductsMapped,
+    canonicalSyncsFailed: summary.canonicalSyncsFailed,
+    priceRangeSyncDuration: summary.priceRangeSyncDuration
   });
 
   return summary;
@@ -498,6 +688,9 @@ async function runWooProductPipeline(storeId) {
     unmatchedCategories: 0,
     orphanOffers: 0,
     invalidProducts: 0,
+    canonicalProductsMapped: 0,
+    canonicalSyncsFailed: 0,
+    priceRangeSyncDuration: 0,
     duration: 0
   };
 
@@ -576,6 +769,41 @@ async function runWooProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+        const mapping = await mapSourceToCanonical(
+          canonicalProduct,
+          canonicalResult.canonical.canonicalId
+        );
+
+        if (mapping?.success) {
+          summary.canonicalProductsMapped += 1;
+          logger.info({
+            message: 'WooCommerce canonical mapping complete',
+            platform: 'woocommerce',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        } else {
+          logger.warn({
+            message: 'WooCommerce canonical mapping failed',
+            platform: 'woocommerce',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+      } else {
+        logger.warn({
+          message: 'WooCommerce canonical mapping skipped',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
       const price = parseNumber(rawProduct?.price);
       const regularPrice = parseNumber(rawProduct?.regular_price);
       const salePrice = parseNumber(rawProduct?.sale_price);
@@ -606,6 +834,7 @@ async function runWooProductPipeline(storeId) {
       };
 
       const upserted = await upsertOffer(offerRecord);
+      const offerUpserted = Boolean(upserted);
       if (upserted) {
         logger.info({
           message: 'WooCommerce offer upserted',
@@ -616,6 +845,55 @@ async function runWooProductPipeline(storeId) {
         });
       } else {
         summary.orphanOffers += 1;
+      }
+
+      if (canonicalProduct?.canonicalProductId && offerUpserted) {
+        const syncStart = Date.now();
+        try {
+          const priceRange = await syncCanonicalPriceRange(
+            canonicalProduct.canonicalProductId
+          );
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          const syncFailed =
+            !priceRange ||
+            (!Number.isFinite(priceRange.min) &&
+              !Number.isFinite(priceRange.max) &&
+              !priceRange.currency);
+
+          if (syncFailed) {
+            summary.canonicalSyncsFailed += 1;
+            logger.warn({
+              message: 'WooCommerce canonical price range sync returned empty range',
+              platform: 'woocommerce',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          } else {
+            logger.info({
+              message: 'WooCommerce canonical price range synced',
+              platform: 'woocommerce',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          }
+        } catch (error) {
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          summary.canonicalSyncsFailed += 1;
+          logger.warn({
+            message: 'WooCommerce canonical price range sync failed',
+            platform: 'woocommerce',
+            storeId: pipelineStoreId,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            duration: syncDuration,
+            error: error?.message || String(error)
+          });
+        }
       }
 
       summary.success += 1;
@@ -639,7 +917,10 @@ async function runWooProductPipeline(storeId) {
     total: summary.total,
     success: summary.success,
     failed: summary.failed,
-    duration: summary.duration
+    duration: summary.duration,
+    canonicalProductsMapped: summary.canonicalProductsMapped,
+    canonicalSyncsFailed: summary.canonicalSyncsFailed,
+    priceRangeSyncDuration: summary.priceRangeSyncDuration
   });
 
   return summary;
@@ -698,6 +979,9 @@ async function runBigCommerceProductPipeline(storeId) {
     unmatchedCategories: 0,
     orphanOffers: 0,
     invalidProducts: 0,
+    canonicalProductsMapped: 0,
+    canonicalSyncsFailed: 0,
+    priceRangeSyncDuration: 0,
     duration: 0
   };
 
@@ -779,6 +1063,41 @@ async function runBigCommerceProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+        const mapping = await mapSourceToCanonical(
+          canonicalProduct,
+          canonicalResult.canonical.canonicalId
+        );
+
+        if (mapping?.success) {
+          summary.canonicalProductsMapped += 1;
+          logger.info({
+            message: 'BigCommerce canonical mapping complete',
+            platform: 'bigcommerce',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        } else {
+          logger.warn({
+            message: 'BigCommerce canonical mapping failed',
+            platform: 'bigcommerce',
+            storeId: pipelineStoreId,
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+      } else {
+        logger.warn({
+          message: 'BigCommerce canonical mapping skipped',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
       const tracking = rawProduct?.inventory_tracking;
       const primaryVariant = rawProduct?.variants?.[0] || null;
       const variantInventory = primaryVariant?.inventory_level;
@@ -822,6 +1141,7 @@ async function runBigCommerceProductPipeline(storeId) {
       };
 
       const upserted = await upsertOffer(offerRecord);
+      const offerUpserted = Boolean(upserted);
       if (upserted) {
         logger.info({
           message: 'BigCommerce offer upserted',
@@ -832,6 +1152,55 @@ async function runBigCommerceProductPipeline(storeId) {
         });
       } else {
         summary.orphanOffers += 1;
+      }
+
+      if (canonicalProduct?.canonicalProductId && offerUpserted) {
+        const syncStart = Date.now();
+        try {
+          const priceRange = await syncCanonicalPriceRange(
+            canonicalProduct.canonicalProductId
+          );
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          const syncFailed =
+            !priceRange ||
+            (!Number.isFinite(priceRange.min) &&
+              !Number.isFinite(priceRange.max) &&
+              !priceRange.currency);
+
+          if (syncFailed) {
+            summary.canonicalSyncsFailed += 1;
+            logger.warn({
+              message: 'BigCommerce canonical price range sync returned empty range',
+              platform: 'bigcommerce',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          } else {
+            logger.info({
+              message: 'BigCommerce canonical price range synced',
+              platform: 'bigcommerce',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
+            });
+          }
+        } catch (error) {
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          summary.canonicalSyncsFailed += 1;
+          logger.warn({
+            message: 'BigCommerce canonical price range sync failed',
+            platform: 'bigcommerce',
+            storeId: pipelineStoreId,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            duration: syncDuration,
+            error: error?.message || String(error)
+          });
+        }
       }
 
       summary.success += 1;
@@ -855,7 +1224,10 @@ async function runBigCommerceProductPipeline(storeId) {
     total: summary.total,
     success: summary.success,
     failed: summary.failed,
-    duration: summary.duration
+    duration: summary.duration,
+    canonicalProductsMapped: summary.canonicalProductsMapped,
+    canonicalSyncsFailed: summary.canonicalSyncsFailed,
+    priceRangeSyncDuration: summary.priceRangeSyncDuration
   });
 
   return summary;

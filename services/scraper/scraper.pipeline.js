@@ -19,6 +19,9 @@ const {
   getOrCreateCanonical,
   mapSourceToCanonical
 } = require('../canonical/canonical.service');
+const {
+  syncCanonicalPriceRange
+} = require('../offer-aggregation/offer.aggregation.service');
 const productSchema = require('../../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -104,6 +107,7 @@ async function runScraperProductPipeline(products, storeId) {
     duplicateProducts: 0,
     invalidProducts: 0,
     offersCreated: 0,
+    priceRangeSyncDuration: 0,
     duration: 0
   };
 
@@ -195,6 +199,7 @@ async function runScraperProductPipeline(products, storeId) {
 
         const canonicalResult = await getOrCreateCanonical(canonicalProduct);
         if (canonicalResult?.canonical?.canonicalId) {
+          canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
           const mapping = await mapSourceToCanonical(
             canonicalProduct,
             canonicalResult.canonical.canonicalId
@@ -238,10 +243,12 @@ async function runScraperProductPipeline(products, storeId) {
         });
       }
 
+      let offerUpsertsForProduct = 0;
       for (const variant of variants) {
         const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
         const upserted = await upsertOffer(offerRecord);
         if (upserted) {
+          offerUpsertsForProduct += 1;
           summary.offersCreated += 1;
           logger.info({
             message: 'Scraped offer upserted',
@@ -249,6 +256,36 @@ async function runScraperProductPipeline(products, storeId) {
             storeId: canonicalProduct?.storeId || null,
             sourceId: offerRecord?.sourceId || null,
             variantId: offerRecord?.variantId || null
+          });
+        }
+      }
+
+      if (canonicalProduct?.canonicalProductId && offerUpsertsForProduct > 0) {
+        const syncStart = Date.now();
+        try {
+          const priceRange = await syncCanonicalPriceRange(
+            canonicalProduct.canonicalProductId
+          );
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          logger.info({
+            message: 'Scraped canonical price range synced',
+            platform: 'scraped',
+            storeId: canonicalProduct?.storeId || null,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            priceRange,
+            duration: syncDuration
+          });
+        } catch (error) {
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          logger.warn({
+            message: 'Scraped canonical price range sync failed',
+            platform: 'scraped',
+            storeId: canonicalProduct?.storeId || null,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            duration: syncDuration,
+            error: error?.message || String(error)
           });
         }
       }
