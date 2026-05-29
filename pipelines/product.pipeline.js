@@ -33,6 +33,9 @@ const {
 const {
   syncCanonicalPriceRange
 } = require('../services/offer-aggregation/offer.aggregation.service');
+const {
+  updateCanonicalWithConflictResolution
+} = require('../services/conflict-resolution/conflict.service');
 const productSchema = require('../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -262,6 +265,23 @@ async function runShopifyProductPipeline(storeId) {
             storeId: pipelineStoreId,
             sourceId: canonicalProduct?.sourceId || null,
             canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+
+        const conflictResult = await updateCanonicalWithConflictResolution(
+          canonicalResult.canonical.canonicalId,
+          canonicalProduct
+        );
+        const conflictCount = Array.isArray(conflictResult?.conflicts)
+          ? conflictResult.conflicts.length
+          : 0;
+        if (conflictCount > 0) {
+          logger.info({
+            message: 'Shopify canonical conflicts resolved',
+            platform: 'shopify',
+            storeId: pipelineStoreId,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            conflictCount
           });
         }
       } else {
@@ -538,6 +558,23 @@ async function runMagentoProductPipeline(storeId) {
             canonicalId: canonicalResult.canonical.canonicalId
           });
         }
+
+        const conflictResult = await updateCanonicalWithConflictResolution(
+          canonicalResult.canonical.canonicalId,
+          canonicalProduct
+        );
+        const conflictCount = Array.isArray(conflictResult?.conflicts)
+          ? conflictResult.conflicts.length
+          : 0;
+        if (conflictCount > 0) {
+          logger.info({
+            message: 'Magento canonical conflicts resolved',
+            platform: 'magento',
+            storeId: pipelineStoreId,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            conflictCount
+          });
+        }
       } else {
         logger.warn({
           message: 'Magento canonical mapping skipped',
@@ -793,6 +830,23 @@ async function runWooProductPipeline(storeId) {
             storeId: pipelineStoreId,
             sourceId: canonicalProduct?.sourceId || null,
             canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+
+        const conflictResult = await updateCanonicalWithConflictResolution(
+          canonicalResult.canonical.canonicalId,
+          canonicalProduct
+        );
+        const conflictCount = Array.isArray(conflictResult?.conflicts)
+          ? conflictResult.conflicts.length
+          : 0;
+        if (conflictCount > 0) {
+          logger.info({
+            message: 'WooCommerce canonical conflicts resolved',
+            platform: 'woocommerce',
+            storeId: pipelineStoreId,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            conflictCount
           });
         }
       } else {
@@ -1087,6 +1141,23 @@ async function runBigCommerceProductPipeline(storeId) {
             storeId: pipelineStoreId,
             sourceId: canonicalProduct?.sourceId || null,
             canonicalId: canonicalResult.canonical.canonicalId
+          });
+        }
+
+        const conflictResult = await updateCanonicalWithConflictResolution(
+          canonicalResult.canonical.canonicalId,
+          canonicalProduct
+        );
+        const conflictCount = Array.isArray(conflictResult?.conflicts)
+          ? conflictResult.conflicts.length
+          : 0;
+        if (conflictCount > 0) {
+          logger.info({
+            message: 'BigCommerce canonical conflicts resolved',
+            platform: 'bigcommerce',
+            storeId: pipelineStoreId,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            conflictCount
           });
         }
       } else {

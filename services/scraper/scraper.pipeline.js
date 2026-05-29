@@ -22,6 +22,9 @@ const {
 const {
   syncCanonicalPriceRange
 } = require('../offer-aggregation/offer.aggregation.service');
+const {
+  updateCanonicalWithConflictResolution
+} = require('../conflict-resolution/conflict.service');
 const productSchema = require('../../schemas/product.schema.json');
 
 const ajv = new Ajv({ strict: false });
@@ -211,6 +214,23 @@ async function runScraperProductPipeline(products, storeId) {
             canonicalId: canonicalResult.canonical.canonicalId,
             success: mapping?.success === true
           });
+
+          const conflictResult = await updateCanonicalWithConflictResolution(
+            canonicalResult.canonical.canonicalId,
+            canonicalProduct
+          );
+          const conflictCount = Array.isArray(conflictResult?.conflicts)
+            ? conflictResult.conflicts.length
+            : 0;
+          if (conflictCount > 0) {
+            logger.info({
+              message: 'Scraped canonical conflicts resolved',
+              platform: 'scraped',
+              storeId: canonicalProduct?.storeId || null,
+              canonicalId: canonicalResult.canonical.canonicalId,
+              conflictCount
+            });
+          }
         } else {
           logger.warn({
             message: 'Canonical mapping skipped',
