@@ -56,13 +56,15 @@ async function upsertProduct(canonicalProduct) {
   }
 
   const collection = getCollection('products');
-  await collection.updateOne(
+  const replacement = { ...canonicalProduct };
+  delete replacement._id;
+  await collection.replaceOne(
     {
       sourceId: canonicalProduct.sourceId,
       source: canonicalProduct.source,
       storeId: canonicalProduct.storeId
     },
-    { $set: canonicalProduct },
+    replacement,
     { upsert: true }
   );
 
