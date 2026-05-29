@@ -29,6 +29,37 @@ function pickVariantSku(product) {
   return null;
 }
 
+function collectVariantDiscriminators(product) {
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  const tokens = new Set();
+
+  const addToken = (value) => {
+    const normalized = normalizeGroupingValue(value);
+    if (normalized) {
+      tokens.add(normalized);
+    }
+  };
+
+  for (const variant of variants) {
+    if (typeof variant?.title === 'string') {
+      addToken(variant.title);
+    }
+
+    if (Array.isArray(variant?.options)) {
+      variant.options.forEach((option) => {
+        addToken(option?.name);
+        addToken(option?.value);
+      });
+    }
+
+    if (variant?.attributes && typeof variant.attributes === 'object') {
+      Object.values(variant.attributes).forEach((value) => addToken(value));
+    }
+  }
+
+  return Array.from(tokens).sort().join('_');
+}
+
 function buildGroupingKey(product) {
   const skuRaw = typeof product?.sku === 'string' ? product.sku.trim() : '';
   const sku = skuRaw || pickVariantSku(product) || '';
@@ -36,6 +67,29 @@ function buildGroupingKey(product) {
 
   if (normalizedSku) {
     return normalizedSku;
+  }
+
+  const variants = Array.isArray(product?.variants) ? product.variants : [];
+  if (variants.length > 0) {
+    const variantSignature = collectVariantDiscriminators(product);
+    if (!variantSignature) {
+      return null;
+    }
+
+    const brandRaw = typeof product?.normalizedBrand === 'string'
+      ? product.normalizedBrand
+      : product?.brand;
+    const titleRaw = typeof product?.cleanedTitle === 'string'
+      ? product.cleanedTitle
+      : product?.title;
+    const normalizedBrand = normalizeGroupingValue(brandRaw);
+    const normalizedTitle = normalizeGroupingValue(titleRaw);
+
+    if (!normalizedBrand || !normalizedTitle) {
+      return null;
+    }
+
+    return `${normalizedBrand}_${normalizedTitle}_${variantSignature}`;
   }
 
   const brandRaw = typeof product?.normalizedBrand === 'string'
@@ -66,7 +120,7 @@ async function findExistingProductMatch(storeId, product) {
 
   const sku = typeof product?.sku === 'string' ? product.sku.trim() : null;
   if (sku) {
-    const match = await findProductBySku(sku);
+    const match = await findProductBySku(storeId, sku);
     if (match) {
       return { match, matchType: 'sku' };
     }
@@ -74,7 +128,7 @@ async function findExistingProductMatch(storeId, product) {
 
   const groupingKey = product?.groupingKey || buildGroupingKey(product);
   if (groupingKey) {
-    const match = await findProductByGroupingKey(groupingKey);
+    const match = await findProductByGroupingKey(storeId, groupingKey);
     if (match) {
       return { match, matchType: 'groupingKey' };
     }

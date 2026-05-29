@@ -5,6 +5,8 @@
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
+const http = axios.create({ timeout: 30000 });
+
 const DEFAULT_PAGE_SIZE = 50;
 const MAX_RETRIES = 3;
 const RETRY_STATUSES = new Set([429, 500, 502, 503]);
@@ -167,7 +169,7 @@ async function requestGraphQL(payload, context) {
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt += 1) {
     try {
-      const response = await axios.post(endpoint, payload, { headers });
+      const response = await http.post(endpoint, payload, { headers });
       const data = response?.data;
 
       const errors = data?.errors || [];

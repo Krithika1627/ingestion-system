@@ -6,6 +6,8 @@ const path = require('path');
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
+const http = axios.create({ timeout: 30000 });
+
 const USE_MOCK = process.env.MAGENTO_USE_MOCK === 'true';
 const DEFAULT_PAGE_SIZE = 20;
 const DEFAULT_RATE_LIMIT_DELAY = 1000;
@@ -170,7 +172,7 @@ async function fetchProducts(store) {
 
     const data = await requestWithRetry(
       async () => {
-        const response = await axios.get(`${baseUrl}/products`, {
+        const response = await http.get(`${baseUrl}/products`, {
           headers,
           params
         });
@@ -265,7 +267,7 @@ async function fetchCategories(store) {
 
   const data = await requestWithRetry(
     async () => {
-      const response = await axios.get(`${baseUrl}/categories`, { headers });
+      const response = await http.get(`${baseUrl}/categories`, { headers });
       return response.data;
     },
     { storeId, retryAttempts }

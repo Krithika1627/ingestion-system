@@ -6,6 +6,8 @@ const path = require('path');
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
+const http = axios.create({ timeout: 30000 });
+
 const USE_MOCK = process.env.WOO_USE_MOCK === 'true';
 const DEFAULT_PAGE_SIZE = 100;
 const DEFAULT_RATE_LIMIT_DELAY = 500;
@@ -175,7 +177,7 @@ async function fetchProducts(store) {
     const url = buildUrl('/products', { per_page: pageSize, page: currentPage });
 
     const response = await requestWithRetry(
-      () => axios.get(url, {
+      () => http.get(url, {
         auth: {
           username: process.env.WOO_CONSUMER_KEY,
           password: process.env.WOO_CONSUMER_SECRET,
@@ -292,7 +294,7 @@ async function fetchCategories(store) {
     });
 
     const response = await requestWithRetry(
-      () => axios.get(url, {
+      () => http.get(url, {
         auth: {
           username: process.env.WOO_CONSUMER_KEY,
           password: process.env.WOO_CONSUMER_SECRET,

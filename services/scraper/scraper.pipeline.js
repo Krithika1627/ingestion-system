@@ -165,6 +165,7 @@ async function runScraperProductPipeline(products, storeId) {
         });
       }
 
+      let canonicalResult = null;
       if (!isDuplicate) {
         if (!canonicalProduct.id) {
           canonicalProduct.id = generateProductId();
@@ -192,45 +193,9 @@ async function runScraperProductPipeline(products, storeId) {
           canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
         }
 
-        await upsertProduct(canonicalProduct);
-        logger.info({
-          message: 'Scraped product upserted',
-          platform: 'scraped',
-          storeId: canonicalProduct?.storeId || null,
-          sourceId: canonicalProduct?.sourceId || null
-        });
-
-        const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+        canonicalResult = await getOrCreateCanonical(canonicalProduct);
         if (canonicalResult?.canonical?.canonicalId) {
           canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
-          const mapping = await mapSourceToCanonical(
-            canonicalProduct,
-            canonicalResult.canonical.canonicalId
-          );
-          logger.info({
-            message: 'Canonical mapping complete',
-            platform: 'scraped',
-            sourceId: canonicalProduct?.sourceId || null,
-            canonicalId: canonicalResult.canonical.canonicalId,
-            success: mapping?.success === true
-          });
-
-          const conflictResult = await updateCanonicalWithConflictResolution(
-            canonicalResult.canonical.canonicalId,
-            canonicalProduct
-          );
-          const conflictCount = Array.isArray(conflictResult?.conflicts)
-            ? conflictResult.conflicts.length
-            : 0;
-          if (conflictCount > 0) {
-            logger.info({
-              message: 'Scraped canonical conflicts resolved',
-              platform: 'scraped',
-              storeId: canonicalProduct?.storeId || null,
-              canonicalId: canonicalResult.canonical.canonicalId,
-              conflictCount
-            });
-          }
         } else {
           logger.warn({
             message: 'Canonical mapping skipped',
@@ -264,19 +229,110 @@ async function runScraperProductPipeline(products, storeId) {
       }
 
       let offerUpsertsForProduct = 0;
-      for (const variant of variants) {
-        const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
-        const upserted = await upsertOffer(offerRecord);
-        if (upserted) {
-          offerUpsertsForProduct += 1;
-          summary.offersCreated += 1;
+      if (!isDuplicate) {
+        await upsertProduct(canonicalProduct);
+        logger.info({
+          message: 'Scraped product upserted',
+          platform: 'scraped',
+          storeId: canonicalProduct?.storeId || null,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+
+        const offerTasks = variants.map((variant) => {
+          const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+          return upsertOffer(offerRecord)
+            .then((upserted) => ({ upserted, offerRecord }));
+        });
+        const offerResults = await Promise.allSettled(offerTasks);
+
+        for (const result of offerResults) {
+          if (result.status === 'fulfilled') {
+            const { upserted, offerRecord } = result.value;
+            if (upserted) {
+              offerUpsertsForProduct += 1;
+              summary.offersCreated += 1;
+              logger.info({
+                message: 'Scraped offer upserted',
+                platform: 'scraped',
+                storeId: canonicalProduct?.storeId || null,
+                sourceId: offerRecord?.sourceId || null,
+                variantId: offerRecord?.variantId || null
+              });
+            }
+          } else {
+            logger.error({
+              message: 'Scraped offer upsert failed',
+              platform: 'scraped',
+              storeId: canonicalProduct?.storeId || null,
+              sourceId: canonicalProduct?.sourceId || null,
+              error: result.reason?.message || String(result.reason)
+            });
+          }
+        }
+
+        if (variants.length > 0 && offerUpsertsForProduct === 0) {
+          throw new Error('Scraped offer upserts failed for product');
+        }
+
+        if (canonicalResult?.canonical?.canonicalId) {
+          const mapping = await mapSourceToCanonical(
+            canonicalProduct,
+            canonicalResult.canonical.canonicalId
+          );
           logger.info({
-            message: 'Scraped offer upserted',
+            message: 'Canonical mapping complete',
             platform: 'scraped',
-            storeId: canonicalProduct?.storeId || null,
-            sourceId: offerRecord?.sourceId || null,
-            variantId: offerRecord?.variantId || null
+            sourceId: canonicalProduct?.sourceId || null,
+            canonicalId: canonicalResult.canonical.canonicalId,
+            success: mapping?.success === true
           });
+
+          const conflictResult = await updateCanonicalWithConflictResolution(
+            canonicalResult.canonical.canonicalId,
+            canonicalProduct
+          );
+          const conflictCount = Array.isArray(conflictResult?.conflicts)
+            ? conflictResult.conflicts.length
+            : 0;
+          if (conflictCount > 0) {
+            logger.info({
+              message: 'Scraped canonical conflicts resolved',
+              platform: 'scraped',
+              storeId: canonicalProduct?.storeId || null,
+              canonicalId: canonicalResult.canonical.canonicalId,
+              conflictCount
+            });
+          }
+        }
+      } else {
+        const offerTasks = variants.map((variant) => {
+          const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+          return upsertOffer(offerRecord).then((upserted) => ({ upserted, offerRecord }));
+        });
+        const offerResults = await Promise.allSettled(offerTasks);
+        for (const result of offerResults) {
+          if (result.status === 'fulfilled') {
+            const { upserted, offerRecord } = result.value;
+            if (upserted) {
+              offerUpsertsForProduct += 1;
+              summary.offersCreated += 1;
+              logger.info({
+                message: 'Scraped offer upserted',
+                platform: 'scraped',
+                storeId: canonicalProduct?.storeId || null,
+                sourceId: offerRecord?.sourceId || null,
+                variantId: offerRecord?.variantId || null
+              });
+            }
+          } else {
+            logger.error({
+              message: 'Scraped offer upsert failed',
+              platform: 'scraped',
+              storeId: canonicalProduct?.storeId || null,
+              sourceId: canonicalProduct?.sourceId || null,
+              error: result.reason?.message || String(result.reason)
+            });
+          }
         }
       }
 

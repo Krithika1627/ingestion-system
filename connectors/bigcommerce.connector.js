@@ -4,6 +4,8 @@
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
+const http = axios.create({ timeout: 30000 });
+
 const USE_MOCK = process.env.BIGCOMMERCE_USE_MOCK === 'true';
 const DEFAULT_PAGE_SIZE = 250;
 const DEFAULT_RATE_LIMIT_DELAY = 500;
@@ -176,7 +178,7 @@ async function loadBrands() {
   while (true) {
     const params = { limit: DEFAULT_PAGE_SIZE, page: currentPage };
     const response = await requestWithRetry(
-      () => axios.get(buildV3Url('/catalog/brands'), { headers, params }),
+      () => http.get(buildV3Url('/catalog/brands'), { headers, params }),
       { page: currentPage }
     );
 
@@ -280,7 +282,7 @@ async function fetchProducts(store) {
     };
 
     const response = await requestWithRetry(
-      () => axios.get(buildV3Url('/catalog/products'), { headers, params }),
+      () => http.get(buildV3Url('/catalog/products'), { headers, params }),
       { storeId, page: currentPage, retryAttempts }
     );
 
@@ -381,7 +383,7 @@ async function fetchCategories(store) {
   while (true) {
     const params = { limit: pageSize, page: currentPage };
     const response = await requestWithRetry(
-      () => axios.get(buildV3Url('/catalog/categories'), { headers, params }),
+      () => http.get(buildV3Url('/catalog/categories'), { headers, params }),
       { storeId, page: currentPage, retryAttempts }
     );
 

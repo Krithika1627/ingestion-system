@@ -6,6 +6,8 @@ const path = require('path');
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
+const http = axios.create({ timeout: 30000 });
+
 const USE_MOCK = process.env.UNICOMMERCE_USE_MOCK === 'true';
 const DEFAULT_PAGE_SIZE = 50;
 const DEFAULT_RATE_LIMIT_DELAY = 500;
@@ -80,7 +82,7 @@ async function authenticate() {
   params.append('username', process.env.UNICOMMERCE_USERNAME || '');
   params.append('password', process.env.UNICOMMERCE_PASSWORD || '');
 
-  const response = await axios.post(`${baseUrl}/oauth/token`, params.toString(), {
+  const response = await http.post(`${baseUrl}/oauth/token`, params.toString(), {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
   });
 
@@ -211,7 +213,7 @@ async function fetchInventorySnapshots(store, facilityCode) {
 
     const data = await requestWithRetry(
       () =>
-        axios.get(url, {
+        http.get(url, {
           headers: { Authorization: `Bearer ${token}` },
           params
         }),

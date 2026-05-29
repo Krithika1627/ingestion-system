@@ -27,7 +27,12 @@ async function connectDB() {
   try {
     await mongoose.connect(mongoUri);
     isConnected = true;
-    logger.info({ message: 'MongoDB connection established', service: 'db' });
+
+    logger.info({
+      message: 'MongoDB connection established',
+      service: 'db',
+      uri: mongoUri.replace(/:\/\/([^@]+)@/, '://<redacted>@')
+    });
   } catch (error) {
     logger.error({ message: 'MongoDB connection failed', service: 'db', error: error.message });
     throw error;
@@ -372,21 +377,22 @@ async function getProductsByStoreAndSource(storeId, source) {
  * @param {string} sku
  * @returns {Promise<object|null>}
  */
-async function findProductBySku(sku) {
+async function findProductBySku(storeId, sku) {
   await connectDB();
 
   const normalizedSku = typeof sku === 'string' ? sku.trim() : '';
-  if (!normalizedSku) {
+  if (!storeId || !normalizedSku) {
     logger.warn({
       message: 'Missing storeId or sku for product lookup',
       service: 'db',
+      storeId: storeId || null,
       sku: normalizedSku || null
     });
     return null;
   }
 
   const collection = getCollection('products');
-  return collection.findOne({ sku: normalizedSku });
+  return collection.findOne({ sku: normalizedSku, storeId });
 }
 
 /**
@@ -395,21 +401,22 @@ async function findProductBySku(sku) {
  * @param {string} groupingKey
  * @returns {Promise<object|null>}
  */
-async function findProductByGroupingKey(groupingKey) {
+async function findProductByGroupingKey(storeId, groupingKey) {
   await connectDB();
 
   const normalizedKey = typeof groupingKey === 'string' ? groupingKey.trim() : '';
-  if (!normalizedKey) {
+  if (!storeId || !normalizedKey) {
     logger.warn({
       message: 'Missing storeId or groupingKey for product lookup',
       service: 'db',
+      storeId: storeId || null,
       groupingKey: normalizedKey || null
     });
     return null;
   }
 
   const collection = getCollection('products');
-  return collection.findOne({ groupingKey: normalizedKey });
+  return collection.findOne({ groupingKey: normalizedKey, storeId });
 }
 
 /**
@@ -447,7 +454,7 @@ async function updateProductCategoryIds(productSourceId, storeId, categoryIds) {
  * @param {object} inventoryPatch
  * @returns {Promise<object>}
  */
-async function updateOfferInventory(skuCode, inventoryPatch) {
+async function updateOfferInventory(skuCode, inventoryPatch, storeId) {
   await connectDB();
 
   if (!skuCode) {
@@ -456,6 +463,7 @@ async function updateOfferInventory(skuCode, inventoryPatch) {
   }
 
   const patch = inventoryPatch || {};
+  const resolvedStoreId = storeId || patch?.storeId || null;
   const fieldsToSet = Object.entries({
     availability: patch.availability,
     stockQty: patch.stockQty,
@@ -474,8 +482,9 @@ async function updateOfferInventory(skuCode, inventoryPatch) {
   }, {});
 
   const offersCollection = getCollection('offers');
+  const offerFilter = resolvedStoreId ? { sku: skuCode, storeId: resolvedStoreId } : { sku: skuCode };
   const offerResult = await offersCollection.updateMany(
-    { sku: skuCode },
+    offerFilter,
     { $set: fieldsToSet }
   );
 
@@ -496,8 +505,11 @@ async function updateOfferInventory(skuCode, inventoryPatch) {
   }
 
   const productsCollection = getCollection('products');
+  const productFilter = resolvedStoreId
+    ? { 'variants.sku': skuCode, storeId: resolvedStoreId }
+    : { 'variants.sku': skuCode };
   const productResult = await productsCollection.updateMany(
-    { 'variants.sku': skuCode },
+    productFilter,
     {
       $set: {
         'variants.$[v].inventoryQty': patch.availableInventory,

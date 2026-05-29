@@ -12,7 +12,18 @@ async function setupIndexes() {
   await db.collection('products').createIndexes([
     { key: { storeId: 1 }, name: 'products_storeId' },
     { key: { sourceId: 1, storeId: 1 }, unique: true, name: 'products_sourceId_storeId' },
-    { key: { sku: 1, storeId: 1 }, name: 'products_sku_storeId' },
+    {
+      key: { sku: 1, storeId: 1 },
+      unique: true,
+      name: 'products_sku_storeId_unique',
+      partialFilterExpression: { sku: { $type: 'string', $gt: '' } }
+    },
+    {
+      key: { groupingKey: 1, storeId: 1 },
+      unique: true,
+      name: 'products_groupingKey_storeId_unique',
+      partialFilterExpression: { groupingKey: { $type: 'string', $gt: '' } }
+    },
     { key: { status: 1 }, name: 'products_status' },
     { key: { categoryIds: 1 }, name: 'products_categoryIds' },
     { key: { source: 1, storeId: 1 }, name: 'products_source_storeId' },

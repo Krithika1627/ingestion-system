@@ -16,8 +16,38 @@ const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline'
 const app = express();
 app.use(express.json());
 
+function normalizeInput(value) {
+	if (value === undefined || value === null) {
+		return null;
+	}
+
+	if (typeof value !== 'string') {
+		return null;
+	}
+
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : null;
+}
+
+function readOptionalInput(value, fallback, field, res) {
+	if (value === undefined || value === null) {
+		return fallback;
+	}
+
+	const normalized = normalizeInput(value);
+	if (!normalized) {
+		res.status(400).json({ success: false, error: `${field} required` });
+		return null;
+	}
+
+	return normalized;
+}
+
 app.post('/sync/shopify', async (req, res) => {
-	const storeId = req?.body?.storeId || 'store_shopify_001';
+	const storeId = readOptionalInput(req?.body?.storeId, 'store_shopify_001', 'storeId', res);
+	if (!storeId) {
+		return;
+	}
 
 	try {
 		const summary = await runShopifyFullSync(storeId);
@@ -83,7 +113,10 @@ app.post('/sync/magento/categories', async (req, res) => {
 
 app.post('/sync/woocommerce', async (req, res) => {
 	try {
-		const storeId = req?.body?.storeId || 'store_woo_001';
+		const storeId = readOptionalInput(req?.body?.storeId, 'store_woo_001', 'storeId', res);
+		if (!storeId) {
+			return;
+		}
 		const summary = await runWooFullSync(storeId);
 		res.json({ success: true, message: 'WooCommerce sync complete', summary });
 	} catch (error) {
@@ -112,8 +145,19 @@ app.post('/sync/woocommerce/categories', async (req, res) => {
 
 app.post('/sync/unicommerce', async (req, res) => {
 	try {
-		const storeId = req?.body?.storeId || 'store_unicommerce_001';
-		const facilityCode = req?.body?.facilityCode || 'FACILITY_DELHI_01';
+		const storeId = readOptionalInput(req?.body?.storeId, 'store_unicommerce_001', 'storeId', res);
+		if (!storeId) {
+			return;
+		}
+		const facilityCode = readOptionalInput(
+			req?.body?.facilityCode,
+			'FACILITY_DELHI_01',
+			'facilityCode',
+			res
+		);
+		if (!facilityCode) {
+			return;
+		}
 		const summary = await runUnicommerceInventorySync(storeId, facilityCode);
 		res.json({ success: true, message: 'Unicommerce inventory sync complete', summary });
 	} catch (error) {
@@ -128,7 +172,10 @@ app.post('/sync/unicommerce', async (req, res) => {
 
 app.post('/sync/bigcommerce', async (req, res) => {
 	try {
-		const storeId = req?.body?.storeId || 'store_bigcommerce_001';
+		const storeId = readOptionalInput(req?.body?.storeId, 'store_bigcommerce_001', 'storeId', res);
+		if (!storeId) {
+			return;
+		}
 		const summary = await runBigCommerceFullSync(storeId);
 		res.json({ success: true, message: 'BigCommerce sync complete', summary });
 	} catch (error) {

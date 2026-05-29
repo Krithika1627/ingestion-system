@@ -233,6 +233,23 @@ async function runShopifyProductPipeline(storeId) {
         });
       }
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+      } else {
+        logger.warn({
+          message: 'Shopify canonical mapping skipped',
+          platform: 'shopify',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      const variants = Array.isArray(canonicalProduct?.variants)
+        ? canonicalProduct.variants
+        : [];
+
+      let offerUpsertsForProduct = 0;
       await upsertProduct(canonicalProduct);
       logger.info({
         message: 'Shopify product upserted',
@@ -241,9 +258,56 @@ async function runShopifyProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
-      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (variants.length === 0) {
+        logger.warn({
+          message: 'Skipping offer upserts due to missing variants',
+          platform: 'shopify',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      } else {
+        const offerTasks = variants.map((variant) => {
+          const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+          return upsertOffer(offerRecord)
+            .then((upserted) => ({ upserted, offerRecord, variant }));
+        });
+        const offerResults = await Promise.allSettled(offerTasks);
+
+        for (const result of offerResults) {
+          if (result.status === 'fulfilled') {
+            const { upserted, offerRecord } = result.value;
+            if (upserted) {
+              offerUpsertsForProduct += 1;
+              logger.info({
+                message: 'Shopify offer upserted',
+                platform: 'shopify',
+                storeId: pipelineStoreId,
+                sourceId: offerRecord?.sourceId || null,
+                variantId: offerRecord?.variantId || null
+              });
+            } else {
+              summary.orphanOffers += 1;
+            }
+          } else {
+            const failedVariant = result.reason?.variantId || null;
+            summary.orphanOffers += 1;
+            logger.error({
+              message: 'Shopify offer upsert failed',
+              platform: 'shopify',
+              storeId: pipelineStoreId,
+              sourceId: canonicalProduct?.sourceId || null,
+              variantId: failedVariant,
+              error: result.reason?.message || String(result.reason)
+            });
+          }
+        }
+
+        if (variants.length > 0 && offerUpsertsForProduct === 0) {
+          throw new Error('Shopify offer upserts failed for product');
+        }
+      }
+
       if (canonicalResult?.canonical?.canonicalId) {
-        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
         const mapping = await mapSourceToCanonical(
           canonicalProduct,
           canonicalResult.canonical.canonicalId
@@ -284,103 +348,54 @@ async function runShopifyProductPipeline(storeId) {
             conflictCount
           });
         }
-      } else {
-        logger.warn({
-          message: 'Shopify canonical mapping skipped',
-          platform: 'shopify',
-          storeId: pipelineStoreId,
-          sourceId: canonicalProduct?.sourceId || null
-        });
       }
 
-      const variants = Array.isArray(canonicalProduct?.variants)
-        ? canonicalProduct.variants
-        : [];
+      if (canonicalProduct?.canonicalProductId && offerUpsertsForProduct > 0) {
+        const syncStart = Date.now();
+        try {
+          const priceRange = await syncCanonicalPriceRange(
+            canonicalProduct.canonicalProductId
+          );
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          const syncFailed =
+            !priceRange ||
+            (!Number.isFinite(priceRange.min) &&
+              !Number.isFinite(priceRange.max) &&
+              !priceRange.currency);
 
-      if (variants.length === 0) {
-        logger.warn({
-          message: 'Skipping offer upserts due to missing variants',
-          platform: 'shopify',
-          storeId: pipelineStoreId,
-          sourceId: canonicalProduct?.sourceId || null
-        });
-      } else {
-        let offerUpsertsForProduct = 0;
-        for (const variant of variants) {
-          try {
-            const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
-            const upserted = await upsertOffer(offerRecord);
-            if (upserted) {
-              offerUpsertsForProduct += 1;
-              logger.info({
-                message: 'Shopify offer upserted',
-                platform: 'shopify',
-                storeId: pipelineStoreId,
-                sourceId: offerRecord?.sourceId || null,
-                variantId: offerRecord?.variantId || null
-              });
-            } else {
-              summary.orphanOffers += 1;
-            }
-          } catch (error) {
-            logger.error({
-              message: 'Shopify offer upsert failed',
-              platform: 'shopify',
-              storeId: pipelineStoreId,
-              sourceId: canonicalProduct?.sourceId || null,
-              variantId: variant?.variantId || null,
-              error: error?.message || String(error)
-            });
-          }
-        }
-
-        if (canonicalProduct?.canonicalProductId && offerUpsertsForProduct > 0) {
-          const syncStart = Date.now();
-          try {
-            const priceRange = await syncCanonicalPriceRange(
-              canonicalProduct.canonicalProductId
-            );
-            const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
-            summary.priceRangeSyncDuration += syncDuration;
-            const syncFailed =
-              !priceRange ||
-              (!Number.isFinite(priceRange.min) &&
-                !Number.isFinite(priceRange.max) &&
-                !priceRange.currency);
-
-            if (syncFailed) {
-              summary.canonicalSyncsFailed += 1;
-              logger.warn({
-                message: 'Shopify canonical price range sync returned empty range',
-                platform: 'shopify',
-                storeId: pipelineStoreId,
-                canonicalProductId: canonicalProduct.canonicalProductId,
-                priceRange,
-                duration: syncDuration
-              });
-            } else {
-              logger.info({
-                message: 'Shopify canonical price range synced',
-                platform: 'shopify',
-                storeId: pipelineStoreId,
-                canonicalProductId: canonicalProduct.canonicalProductId,
-                priceRange,
-                duration: syncDuration
-              });
-            }
-          } catch (error) {
-            const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
-            summary.priceRangeSyncDuration += syncDuration;
+          if (syncFailed) {
             summary.canonicalSyncsFailed += 1;
             logger.warn({
-              message: 'Shopify canonical price range sync failed',
+              message: 'Shopify canonical price range sync returned empty range',
               platform: 'shopify',
               storeId: pipelineStoreId,
               canonicalProductId: canonicalProduct.canonicalProductId,
-              duration: syncDuration,
-              error: error?.message || String(error)
+              priceRange,
+              duration: syncDuration
+            });
+          } else {
+            logger.info({
+              message: 'Shopify canonical price range synced',
+              platform: 'shopify',
+              storeId: pipelineStoreId,
+              canonicalProductId: canonicalProduct.canonicalProductId,
+              priceRange,
+              duration: syncDuration
             });
           }
+        } catch (error) {
+          const syncDuration = Number(((Date.now() - syncStart) / 1000).toFixed(2));
+          summary.priceRangeSyncDuration += syncDuration;
+          summary.canonicalSyncsFailed += 1;
+          logger.warn({
+            message: 'Shopify canonical price range sync failed',
+            platform: 'shopify',
+            storeId: pipelineStoreId,
+            canonicalProductId: canonicalProduct.canonicalProductId,
+            duration: syncDuration,
+            error: error?.message || String(error)
+          });
         }
       }
 
@@ -392,7 +407,8 @@ async function runShopifyProductPipeline(storeId) {
         platform: 'shopify',
         storeId: pipelineStoreId,
         sourceId: rawProduct?.id || null,
-        error: error?.message || String(error)
+        error: error?.message || String(error),
+        stack: error?.stack || null
       });
     }
   }
@@ -524,6 +540,23 @@ async function runMagentoProductPipeline(storeId) {
         });
       }
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+      } else {
+        logger.warn({
+          message: 'Magento canonical mapping skipped',
+          platform: 'magento',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      const stockQty =
+        typeof rawProduct?.extension_attributes?.stock_item?.qty === 'number'
+          ? rawProduct.extension_attributes.stock_item.qty
+          : null;
+      let offerUpserted = false;
       await upsertProduct(canonicalProduct);
       logger.info({
         message: 'Magento product upserted',
@@ -532,9 +565,38 @@ async function runMagentoProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
-      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      const offerRecord = {
+        id: randomUUID(),
+        sourceId: canonicalProduct?.sourceId || null,
+        productId: canonicalProduct?.id || null,
+        storeId: pipelineStoreId,
+        variantId: rawProduct?.sku || null,
+        sku: rawProduct?.sku || null,
+        price: typeof rawProduct?.price === 'number' ? rawProduct.price : null,
+        compareAtPrice: null,
+        discountPercent: null,
+        currency: process.env.MAGENTO_CURRENCY || 'INR',
+        availability: deriveAvailability(stockQty, 10),
+        stockQty,
+        lastSyncedAt: new Date().toISOString()
+      };
+
+      const upserted = await upsertOffer(offerRecord);
+      offerUpserted = Boolean(upserted);
+      if (upserted) {
+        logger.info({
+          message: 'Magento offer upserted',
+          platform: 'magento',
+          storeId: pipelineStoreId,
+          sourceId: offerRecord?.sourceId || null,
+          variantId: offerRecord?.variantId || null
+        });
+      } else {
+        summary.orphanOffers += 1;
+        throw new Error('Magento offer upsert failed for product');
+      }
+
       if (canonicalResult?.canonical?.canonicalId) {
-        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
         const mapping = await mapSourceToCanonical(
           canonicalProduct,
           canonicalResult.canonical.canonicalId
@@ -575,47 +637,6 @@ async function runMagentoProductPipeline(storeId) {
             conflictCount
           });
         }
-      } else {
-        logger.warn({
-          message: 'Magento canonical mapping skipped',
-          platform: 'magento',
-          storeId: pipelineStoreId,
-          sourceId: canonicalProduct?.sourceId || null
-        });
-      }
-
-      const stockQty =
-        typeof rawProduct?.extension_attributes?.stock_item?.qty === 'number'
-          ? rawProduct.extension_attributes.stock_item.qty
-          : null;
-      const offerRecord = {
-        id: randomUUID(),
-        sourceId: canonicalProduct?.sourceId || null,
-        productId: canonicalProduct?.id || null,
-        storeId: pipelineStoreId,
-        variantId: rawProduct?.sku || null,
-        sku: rawProduct?.sku || null,
-        price: typeof rawProduct?.price === 'number' ? rawProduct.price : null,
-        compareAtPrice: null,
-        discountPercent: null,
-        currency: process.env.MAGENTO_CURRENCY || 'INR',
-        availability: deriveAvailability(stockQty, 10),
-        stockQty,
-        lastSyncedAt: new Date().toISOString()
-      };
-
-      const upserted = await upsertOffer(offerRecord);
-      const offerUpserted = Boolean(upserted);
-      if (upserted) {
-        logger.info({
-          message: 'Magento offer upserted',
-          platform: 'magento',
-          storeId: pipelineStoreId,
-          sourceId: offerRecord?.sourceId || null,
-          variantId: offerRecord?.variantId || null
-        });
-      } else {
-        summary.orphanOffers += 1;
       }
 
       if (canonicalProduct?.canonicalProductId && offerUpserted) {
@@ -798,6 +819,28 @@ async function runWooProductPipeline(storeId) {
         });
       }
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+      } else {
+        logger.warn({
+          message: 'WooCommerce canonical mapping skipped',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      const price = parseNumber(rawProduct?.price);
+      const regularPrice = parseNumber(rawProduct?.regular_price);
+      const salePrice = parseNumber(rawProduct?.sale_price);
+      const onSale = Boolean(rawProduct?.on_sale);
+      const discountPercent =
+        onSale && Number.isFinite(regularPrice) && Number.isFinite(salePrice) && regularPrice
+          ? Number((((regularPrice - salePrice) / regularPrice) * 100).toFixed(2))
+          : null;
+
+      let offerUpserted = false;
       await upsertProduct(canonicalProduct);
       logger.info({
         message: 'WooCommerce product upserted',
@@ -806,9 +849,42 @@ async function runWooProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
-      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      const offerRecord = {
+        id: randomUUID(),
+        sourceId: sourceId,
+        productId: canonicalProduct?.id || null,
+        storeId: pipelineStoreId,
+        variantId: rawProduct?.sku || sourceId,
+        sku: rawProduct?.sku || null,
+        price: Number.isFinite(price) ? price : 0,
+        compareAtPrice: onSale && Number.isFinite(regularPrice) ? regularPrice : null,
+        discountPercent,
+        currency: 'INR',
+        availability: deriveWooAvailability(
+          rawProduct?.stock_quantity ?? null,
+          rawProduct?.stock_status,
+          threshold
+        ),
+        stockQty: rawProduct?.stock_quantity ?? null,
+        lastSyncedAt: new Date().toISOString()
+      };
+
+      const upserted = await upsertOffer(offerRecord);
+      offerUpserted = Boolean(upserted);
+      if (upserted) {
+        logger.info({
+          message: 'WooCommerce offer upserted',
+          platform: 'woocommerce',
+          storeId: pipelineStoreId,
+          sourceId: offerRecord?.sourceId || null,
+          variantId: offerRecord?.variantId || null
+        });
+      } else {
+        summary.orphanOffers += 1;
+        throw new Error('WooCommerce offer upsert failed for product');
+      }
+
       if (canonicalResult?.canonical?.canonicalId) {
-        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
         const mapping = await mapSourceToCanonical(
           canonicalProduct,
           canonicalResult.canonical.canonicalId
@@ -849,56 +925,6 @@ async function runWooProductPipeline(storeId) {
             conflictCount
           });
         }
-      } else {
-        logger.warn({
-          message: 'WooCommerce canonical mapping skipped',
-          platform: 'woocommerce',
-          storeId: pipelineStoreId,
-          sourceId: canonicalProduct?.sourceId || null
-        });
-      }
-
-      const price = parseNumber(rawProduct?.price);
-      const regularPrice = parseNumber(rawProduct?.regular_price);
-      const salePrice = parseNumber(rawProduct?.sale_price);
-      const onSale = Boolean(rawProduct?.on_sale);
-      const discountPercent =
-        onSale && Number.isFinite(regularPrice) && Number.isFinite(salePrice) && regularPrice
-          ? Number((((regularPrice - salePrice) / regularPrice) * 100).toFixed(2))
-          : null;
-
-      const offerRecord = {
-        id: randomUUID(),
-        sourceId: sourceId,
-        productId: canonicalProduct?.id || null,
-        storeId: pipelineStoreId,
-        variantId: rawProduct?.sku || sourceId,
-        sku: rawProduct?.sku || null,
-        price: Number.isFinite(price) ? price : 0,
-        compareAtPrice: onSale && Number.isFinite(regularPrice) ? regularPrice : null,
-        discountPercent,
-        currency: 'INR',
-        availability: deriveWooAvailability(
-          rawProduct?.stock_quantity ?? null,
-          rawProduct?.stock_status,
-          threshold
-        ),
-        stockQty: rawProduct?.stock_quantity ?? null,
-        lastSyncedAt: new Date().toISOString()
-      };
-
-      const upserted = await upsertOffer(offerRecord);
-      const offerUpserted = Boolean(upserted);
-      if (upserted) {
-        logger.info({
-          message: 'WooCommerce offer upserted',
-          platform: 'woocommerce',
-          storeId: pipelineStoreId,
-          sourceId: offerRecord?.sourceId || null,
-          variantId: offerRecord?.variantId || null
-        });
-      } else {
-        summary.orphanOffers += 1;
       }
 
       if (canonicalProduct?.canonicalProductId && offerUpserted) {
@@ -1109,6 +1135,45 @@ async function runBigCommerceProductPipeline(storeId) {
         });
       }
 
+      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      if (canonicalResult?.canonical?.canonicalId) {
+        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+      } else {
+        logger.warn({
+          message: 'BigCommerce canonical mapping skipped',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: canonicalProduct?.sourceId || null
+        });
+      }
+
+      const tracking = rawProduct?.inventory_tracking;
+      const primaryVariant = rawProduct?.variants?.[0] || null;
+      const variantInventory = primaryVariant?.inventory_level;
+      const productInventory = rawProduct?.inventory_level;
+      const resolvedInventory = tracking === 'variant'
+        ? (typeof variantInventory === 'number' ? variantInventory : productInventory)
+        : productInventory;
+      const stockQty = tracking === 'none'
+        ? null
+        : resolvedInventory ?? 0;
+
+      const salePrice = parseNumber(rawProduct?.sale_price);
+      const price = parseNumber(rawProduct?.price);
+      const retailPrice = parseNumber(rawProduct?.retail_price);
+      const hasSale = Number.isFinite(salePrice) && salePrice > 0;
+      const effectivePrice = hasSale ? salePrice : Number.isFinite(price) ? price : 0;
+      const compareAtPrice = hasSale && Number.isFinite(retailPrice) ? retailPrice : null;
+      const discountPercent = hasSale && Number.isFinite(retailPrice) && retailPrice > 0
+        ? Number((((retailPrice - salePrice) / retailPrice) * 100).toFixed(2))
+        : null;
+
+      const variantId = primaryVariant?.id !== undefined && primaryVariant?.id !== null
+        ? String(primaryVariant.id)
+        : rawProduct?.sku || sourceId;
+      const sku = primaryVariant?.sku || rawProduct?.sku || null;
+
+      let offerUpserted = false;
       await upsertProduct(canonicalProduct);
       logger.info({
         message: 'BigCommerce product upserted',
@@ -1117,9 +1182,38 @@ async function runBigCommerceProductPipeline(storeId) {
         sourceId: canonicalProduct?.sourceId || null
       });
 
-      const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+      const offerRecord = {
+        id: randomUUID(),
+        sourceId: sourceId,
+        productId: canonicalProduct?.id || null,
+        storeId: pipelineStoreId,
+        variantId,
+        sku,
+        price: effectivePrice,
+        compareAtPrice,
+        discountPercent,
+        currency: 'INR',
+        availability: deriveAvailability(stockQty, threshold),
+        stockQty,
+        lastSyncedAt: new Date().toISOString()
+      };
+
+      const upserted = await upsertOffer(offerRecord);
+      offerUpserted = Boolean(upserted);
+      if (upserted) {
+        logger.info({
+          message: 'BigCommerce offer upserted',
+          platform: 'bigcommerce',
+          storeId: pipelineStoreId,
+          sourceId: offerRecord?.sourceId || null,
+          variantId: offerRecord?.variantId || null
+        });
+      } else {
+        summary.orphanOffers += 1;
+        throw new Error('BigCommerce offer upsert failed for product');
+      }
+
       if (canonicalResult?.canonical?.canonicalId) {
-        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
         const mapping = await mapSourceToCanonical(
           canonicalProduct,
           canonicalResult.canonical.canonicalId
@@ -1160,69 +1254,6 @@ async function runBigCommerceProductPipeline(storeId) {
             conflictCount
           });
         }
-      } else {
-        logger.warn({
-          message: 'BigCommerce canonical mapping skipped',
-          platform: 'bigcommerce',
-          storeId: pipelineStoreId,
-          sourceId: canonicalProduct?.sourceId || null
-        });
-      }
-
-      const tracking = rawProduct?.inventory_tracking;
-      const primaryVariant = rawProduct?.variants?.[0] || null;
-      const variantInventory = primaryVariant?.inventory_level;
-      const productInventory = rawProduct?.inventory_level;
-      const resolvedInventory = tracking === 'variant'
-        ? (typeof variantInventory === 'number' ? variantInventory : productInventory)
-        : productInventory;
-      const stockQty = tracking === 'none'
-        ? null
-        : resolvedInventory ?? 0;
-
-      const salePrice = parseNumber(rawProduct?.sale_price);
-      const price = parseNumber(rawProduct?.price);
-      const retailPrice = parseNumber(rawProduct?.retail_price);
-      const hasSale = Number.isFinite(salePrice) && salePrice > 0;
-      const effectivePrice = hasSale ? salePrice : Number.isFinite(price) ? price : 0;
-      const compareAtPrice = hasSale && Number.isFinite(retailPrice) ? retailPrice : null;
-      const discountPercent = hasSale && Number.isFinite(retailPrice) && retailPrice > 0
-        ? Number((((retailPrice - salePrice) / retailPrice) * 100).toFixed(2))
-        : null;
-
-      const variantId = primaryVariant?.id !== undefined && primaryVariant?.id !== null
-        ? String(primaryVariant.id)
-        : rawProduct?.sku || sourceId;
-      const sku = primaryVariant?.sku || rawProduct?.sku || null;
-
-      const offerRecord = {
-        id: randomUUID(),
-        sourceId: sourceId,
-        productId: canonicalProduct?.id || null,
-        storeId: pipelineStoreId,
-        variantId,
-        sku,
-        price: effectivePrice,
-        compareAtPrice,
-        discountPercent,
-        currency: 'INR',
-        availability: deriveAvailability(stockQty, threshold),
-        stockQty,
-        lastSyncedAt: new Date().toISOString()
-      };
-
-      const upserted = await upsertOffer(offerRecord);
-      const offerUpserted = Boolean(upserted);
-      if (upserted) {
-        logger.info({
-          message: 'BigCommerce offer upserted',
-          platform: 'bigcommerce',
-          storeId: pipelineStoreId,
-          sourceId: offerRecord?.sourceId || null,
-          variantId: offerRecord?.variantId || null
-        });
-      } else {
-        summary.orphanOffers += 1;
       }
 
       if (canonicalProduct?.canonicalProductId && offerUpserted) {

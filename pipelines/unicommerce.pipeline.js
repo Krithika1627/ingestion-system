@@ -61,7 +61,7 @@ async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', fa
         continue;
       }
 
-      const result = await updateOfferInventory(patch.sku, patch);
+      const result = await updateOfferInventory(patch.sku, patch, pipelineStoreId);
       if (result?.offersMatched > 0) {
         updated += 1;
       } else {
