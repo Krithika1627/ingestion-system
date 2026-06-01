@@ -5,6 +5,9 @@ require('dotenv').config();
 
 const express = require('express');
 const logger = require('./services/logger.service');
+const { connectDB } = require('./services/db.service');
+const { loadSchedules } = require('./services/scheduler.service');
+const schedulerRoutes = require('./connectors/scheduler.routes');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
@@ -15,6 +18,7 @@ const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline'
 
 const app = express();
 app.use(express.json());
+app.use('/scheduler', schedulerRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {
@@ -207,6 +211,22 @@ app.post('/sync/bigcommerce/products', async (req, res) => {
 });
 
 const port = Number(process.env.PORT) || 3000;
+async function initializeScheduler() {
+	try {
+		await connectDB();
+		await loadSchedules();
+		logger.info({ message: 'Scheduler initialized', service: 'scheduler' });
+	} catch (error) {
+		logger.error({
+			message: 'Scheduler initialization failed',
+			service: 'scheduler',
+			error: error?.message || String(error)
+		});
+	}
+}
+
+initializeScheduler();
+
 app.listen(port, () => {
 	logger.info({ message: 'Server started successfully', port });
 });
