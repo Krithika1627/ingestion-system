@@ -1,0 +1,823 @@
+/**
+ * Webhook processing service for Shopify and WooCommerce real-time updates.
+ *
+ * Responsibilities:
+ *  - Verify Shopify HMAC signatures (timing-safe)
+ *  - Verify WooCommerce webhook signatures
+ *  - Route webhook topics to the correct transformer + pipeline
+ *  - Log every webhook received with platform, topic, storeId, outcome
+ */
+const crypto = require('crypto');
+const mongoose = require('mongoose');
+const Ajv = require('ajv');
+const addFormats = require('ajv-formats');
+const { randomUUID } = require('crypto');
+
+const logger = require('./logger.service');
+const { connectDB, upsertProduct, upsertRaw, upsertOffer, updateOfferInventory } = require('./db.service');
+const { transformProduct: transformShopifyProduct } = require('../transformers/shopify.transformer');
+const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
+const {
+        buildGroupingKey,
+        findExistingProductMatch,
+        mergeMatchedProduct
+} = require('./product-matching.service');
+const {
+        getOrCreateCanonical,
+        mapSourceToCanonical
+} = require('./canonical/canonical.service');
+const {
+        syncCanonicalPriceRange
+} = require('./offer-aggregation/offer.aggregation.service');
+const {
+        updateCanonicalWithConflictResolution
+} = require('./conflict-resolution/conflict.service');
+
+const productSchema = require('../schemas/product.schema.json');
+
+const ajv = new Ajv({ strict: false });
+addFormats(ajv);
+const validate = ajv.compile(productSchema);
+
+/* ------------------------------------------------------------------ */
+/*  Signature Verification                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Verify Shopify HMAC-SHA256 signature using timing-safe comparison.
+ * @param {Buffer|string} rawBody  — the raw, unparsed request body
+ * @param {string}         hmacHeader — value of X-Shopify-Hmac-Sha256
+ * @returns {boolean}
+ */
+function verifyShopifyHmac(rawBody, hmacHeader) {
+        if (!rawBody || !hmacHeader) {
+                logger.warn({
+                        message: 'Shopify HMAC verification skipped — missing rawBody or header',
+                        service: 'webhook'
+                });
+                return false;
+        }
+
+        const secret = process.env.SHOPIFY_WEBHOOK_SECRET;
+        if (!secret) {
+                logger.error({
+                        message: 'SHOPIFY_WEBHOOK_SECRET is not configured',
+                        service: 'webhook'
+                });
+                return false;
+        }
+
+        try {
+                const computed = crypto
+                        .createHmac('sha256', secret)
+                        .update(rawBody)
+                        .digest('base64');
+
+                const computedBuf = Buffer.from(computed, 'base64');
+                const headerBuf = Buffer.from(hmacHeader, 'base64');
+
+                if (computedBuf.length !== headerBuf.length) {
+                        return false;
+                }
+
+                return crypto.timingSafeEqual(computedBuf, headerBuf);
+        } catch (error) {
+                logger.error({
+                        message: 'Shopify HMAC verification error',
+                        service: 'webhook',
+                        error: error?.message || String(error)
+                });
+                return false;
+        }
+}
+
+/**
+ * Verify WooCommerce webhook signature (HMAC-SHA256, base64-encoded).
+ * @param {Buffer|string} rawBody        — the raw, unparsed request body
+ * @param {string}         signatureHeader — value of X-WC-Webhook-Signature
+ * @returns {boolean}
+ */
+function verifyWooCommerceSignature(rawBody, signatureHeader) {
+        if (!rawBody || !signatureHeader) {
+                logger.warn({
+                        message: 'WooCommerce signature verification skipped — missing rawBody or header',
+                        service: 'webhook'
+                });
+                return false;
+        }
+
+        const secret = process.env.WOOCOMMERCE_WEBHOOK_SECRET;
+        if (!secret) {
+                logger.error({
+                        message: 'WOOCOMMERCE_WEBHOOK_SECRET is not configured',
+                        service: 'webhook'
+                });
+                return false;
+        }
+
+        try {
+                const computed = crypto
+                        .createHmac('sha256', secret)
+                        .update(rawBody)
+                        .digest('base64');
+
+                const computedBuf = Buffer.from(computed, 'base64');
+                const headerBuf = Buffer.from(signatureHeader, 'base64');
+
+                if (computedBuf.length !== headerBuf.length) {
+                        return false;
+                }
+
+                return crypto.timingSafeEqual(computedBuf, headerBuf);
+        } catch (error) {
+                logger.error({
+                        message: 'WooCommerce signature verification error',
+                        service: 'webhook',
+                        error: error?.message || String(error)
+                });
+                return false;
+        }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Shopify REST → GraphQL Adapter                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Convert a Shopify REST webhook payload into the GraphQL-like structure
+ * expected by transformProduct in shopify.transformer.
+ *
+ * @param {object} restPayload — Shopify REST API product object
+ * @returns {object} GraphQL-like product node
+ */
+function adaptShopifyRestToGraphql(restPayload) {
+        const src = restPayload || {};
+
+        const variantNodes = (Array.isArray(src.variants) ? src.variants : []).map((v) => ({
+                id: v?.id != null
+        ? (String(v.id).startsWith('gid://') ? String(v.id) : `gid://shopify/ProductVariant/${v.id}`)
+        : null,
+                sku: v?.sku || null,
+                price: v?.price != null ? String(v.price) : null,
+                compareAtPrice: v?.compare_at_price != null ? String(v.compare_at_price) : null,
+                inventoryQuantity: typeof v?.inventory_quantity === 'number' ? v.inventory_quantity : null,
+                inventoryItemId: v?.inventory_item_id != null ? v?.inventory_item_id : null
+        }));
+
+        const mediaEdges = (Array.isArray(src.images) ? src.images : []).map((img, idx) => ({
+                node: {
+                        preview: {
+                                image: {
+                                        url: img?.src || null
+                                }
+                        }
+                }
+        }));
+
+        const tags = Array.isArray(src.tags)
+                ? src.tags
+                : typeof src.tags === 'string'
+                        ? src.tags.split(',').map((t) => t.trim()).filter(Boolean)
+                        : [];
+
+        const currencyCode = src?.variants?.[0]?.presentment_prices?.[0]?.price?.currency_code || 'INR';
+
+        return {
+                id: src?.id != null
+        ? (String(src.id).startsWith('gid://') ? String(src.id) : `gid://shopify/Product/${src.id}`)
+        : null,
+                title: src?.title || '',
+                description: src?.body_html || null,
+                vendor: src?.vendor || null,
+                productType: src?.product_type || null,
+                status: src?.status || null,
+                tags,
+                createdAt: src?.created_at || null,
+                updatedAt: src?.updated_at || null,
+                variants: {
+                        edges: variantNodes.map((node) => ({ node }))
+                },
+                media: {
+                        edges: mediaEdges
+                },
+                priceRangeV2: {
+                        minVariantPrice: {
+                                currencyCode
+                        }
+                }
+        };
+}
+
+/* ------------------------------------------------------------------ */
+/*  Single-Product Upsert (mirrors product.pipeline per-item logic)    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Compute availability from inventory quantity and in-stock flag.
+ * @param {number|null|undefined} inventoryQty
+ * @param {boolean} isInStock
+ * @returns {string}
+ */
+function getAvailability(inventoryQty, isInStock) {
+        if (typeof inventoryQty !== 'number') {
+                return isInStock ? 'in_stock' : 'out_of_stock';
+        }
+        return inventoryQty > 0 ? 'in_stock' : 'out_of_stock';
+}
+
+/**
+ * Build an offer record from a product and variant.
+ * @param {object} product
+ * @param {object} variant
+ * @returns {object}
+ */
+function buildOfferFromVariant(product, variant) {
+        return {
+                id: randomUUID(),
+                sourceId: product?.sourceId || null,
+                productId: product?.id || null,
+                storeId: product?.storeId || null,
+                variantId: variant?.variantId || null,
+                sku: variant?.sku ?? product?.sku ?? null,
+                price: variant?.price ?? null,
+                compareAtPrice: variant?.compareAtPrice ?? null,
+                currency: variant?.currency ?? null,
+                stockQty: variant?.inventoryQty ?? null,
+                isInStock: variant?.isInStock ?? false,
+                availability: getAvailability(variant?.inventoryQty, variant?.isInStock ?? false),
+                lastSyncedAt: product?.lastSyncedAt || new Date().toISOString()
+        };
+}
+
+/**
+ * Process a single Shopify product through transform → validate → upsert.
+ * Mirrors the per-product loop in runShopifyProductPipeline.
+ *
+ * @param {object} rawProduct — Shopify REST product payload
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, sourceId:string|null, error?:string}>}
+ */
+async function processSingleShopifyProduct(rawProduct, storeId) {
+        const pipelineStoreId = storeId || 'store_shopify_001';
+
+        try {
+                await connectDB();
+
+                /* 1. Adapt REST → GraphQL, then store raw */
+                const graphqlNode = adaptShopifyRestToGraphql(rawProduct);
+
+                const rawPayload = {
+                        storeId: pipelineStoreId,
+                        sourceId: graphqlNode?.id || rawProduct?.id || null,
+                        data: rawProduct
+                };
+                await upsertRaw('shopify', rawPayload);
+
+                /* 2. Transform */
+                let canonicalProduct = transformShopifyProduct(graphqlNode, pipelineStoreId);
+                canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+                /* 3. Validate */
+                const isValid = validate(canonicalProduct);
+                if (!isValid) {
+                        logger.warn({
+                                message: 'Shopify webhook product validation failed',
+                                platform: 'shopify',
+                                storeId: pipelineStoreId,
+                                sourceId: canonicalProduct?.sourceId || null,
+                                errors: validate.errors
+                        });
+                        return { success: false, sourceId: canonicalProduct?.sourceId || null, error: 'Validation failed' };
+                }
+
+                /* 4. Match & merge */
+                const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+                if (matchResult?.match) {
+                        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+                }
+
+                /* 5. Canonical mapping */
+                const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+                if (canonicalResult?.canonical?.canonicalId) {
+                        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+                }
+
+                /* 6. Upsert product */
+                await upsertProduct(canonicalProduct);
+
+                /* 7. Upsert offers for each variant */
+                const variants = Array.isArray(canonicalProduct?.variants) ? canonicalProduct.variants : [];
+                if (variants.length > 0) {
+                        const offerTasks = variants.map((variant) => {
+                                const offerRecord = buildOfferFromVariant(canonicalProduct, variant);
+                                return upsertOffer(offerRecord);
+                        });
+                        await Promise.allSettled(offerTasks);
+                }
+
+                /* 8. Canonical source mapping + conflict resolution + price sync */
+                if (canonicalResult?.canonical?.canonicalId) {
+                        await mapSourceToCanonical(canonicalProduct, canonicalResult.canonical.canonicalId);
+                        await updateCanonicalWithConflictResolution(canonicalResult.canonical.canonicalId, canonicalProduct);
+                }
+
+                if (canonicalProduct?.canonicalProductId) {
+                        try {
+                                await syncCanonicalPriceRange(canonicalProduct.canonicalProductId);
+                        } catch (priceError) {
+                                logger.warn({
+                                        message: 'Shopify webhook canonical price range sync failed',
+                                        platform: 'shopify',
+                                        storeId: pipelineStoreId,
+                                        canonicalProductId: canonicalProduct.canonicalProductId,
+                                        error: priceError?.message || String(priceError)
+                                });
+                        }
+                }
+
+                return { success: true, sourceId: canonicalProduct?.sourceId || null };
+        } catch (error) {
+                logger.error({
+                        message: 'Shopify webhook single-product processing error',
+                        platform: 'shopify',
+                        storeId: pipelineStoreId,
+                        sourceId: rawProduct?.id || null,
+                        error: error?.message || String(error),
+                        stack: error?.stack || null
+                });
+                return { success: false, sourceId: rawProduct?.id || null, error: error?.message || String(error) };
+        }
+}
+
+/**
+ * Process a single WooCommerce product through transform → validate → upsert.
+ * WooCommerce webhook payloads already match the REST format the transformer expects.
+ *
+ * @param {object} rawProduct — WooCommerce REST product payload
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, sourceId:string|null, error?:string}>}
+ */
+async function processSingleWooProduct(rawProduct, storeId) {
+        const pipelineStoreId = storeId || 'store_woo_001';
+
+        try {
+                await connectDB();
+
+                const sourceId = rawProduct?.id != null ? String(rawProduct.id) : null;
+
+                /* 1. Store raw */
+                const rawPayload = {
+                        storeId: pipelineStoreId,
+                        sourceId,
+                        data: rawProduct
+                };
+                await upsertRaw('woocommerce', rawPayload);
+
+                /* 2. Transform — WooCommerce webhook payload matches REST format */
+                
+                let canonicalProduct = transformWooProduct(rawProduct, pipelineStoreId);
+                canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
+
+                /* Ensure status is a string (WooCommerce may not always send it) */
+                if (!canonicalProduct.status || typeof canonicalProduct.status !== 'string') {
+                canonicalProduct.status = rawProduct?.status === 'draft' ? 'draft' : 'active';
+                }
+
+                /* 3. Validate */
+                const isValid = validate(canonicalProduct);
+                if (!isValid) {
+                        logger.warn({
+                                message: 'WooCommerce webhook product validation failed',
+                                platform: 'woocommerce',
+                                storeId: pipelineStoreId,
+                                sourceId: canonicalProduct?.sourceId || null,
+                                errors: validate.errors
+                        });
+                        return { success: false, sourceId: canonicalProduct?.sourceId || null, error: 'Validation failed' };
+                }
+
+                /* 4. Match & merge */
+                const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
+                if (matchResult?.match) {
+                        canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
+                }
+
+                /* 5. Canonical mapping */
+                const canonicalResult = await getOrCreateCanonical(canonicalProduct);
+                if (canonicalResult?.canonical?.canonicalId) {
+                        canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
+                }
+
+                /* 6. Upsert product */
+                await upsertProduct(canonicalProduct);
+
+                /* 7. Upsert offer */
+                const parseNumber = (v) => { const p = parseFloat(v); return Number.isFinite(p) ? p : null; };
+                const price = parseNumber(rawProduct?.price);
+                const regularPrice = parseNumber(rawProduct?.regular_price);
+                const salePrice = parseNumber(rawProduct?.sale_price);
+                const onSale = Boolean(rawProduct?.on_sale);
+                const discountPercent =
+                        onSale && Number.isFinite(regularPrice) && Number.isFinite(salePrice) && regularPrice
+                                ? Number((((regularPrice - salePrice) / regularPrice) * 100).toFixed(2))
+                                : null;
+
+                const offerRecord = {
+                        id: randomUUID(),
+                        sourceId,
+                        productId: canonicalProduct?.id || null,
+                        storeId: pipelineStoreId,
+                        variantId: rawProduct?.sku || sourceId,
+                        sku: rawProduct?.sku || null,
+                        price: Number.isFinite(price) ? price : 0,
+                        compareAtPrice: onSale && Number.isFinite(regularPrice) ? regularPrice : null,
+                        discountPercent,
+                        currency: 'INR',
+                        availability: rawProduct?.stock_status === 'outofstock' ? 'out_of_stock' : 'in_stock',
+                        stockQty: rawProduct?.stock_quantity ?? null,
+                        lastSyncedAt: new Date().toISOString()
+                };
+
+                await upsertOffer(offerRecord);
+
+                /* 8. Canonical source mapping + conflict resolution + price sync */
+                if (canonicalResult?.canonical?.canonicalId) {
+                        await mapSourceToCanonical(canonicalProduct, canonicalResult.canonical.canonicalId);
+                        await updateCanonicalWithConflictResolution(canonicalResult.canonical.canonicalId, canonicalProduct);
+                }
+
+                if (canonicalProduct?.canonicalProductId) {
+                        try {
+                                await syncCanonicalPriceRange(canonicalProduct.canonicalProductId);
+                        } catch (priceError) {
+                                logger.warn({
+                                        message: 'WooCommerce webhook canonical price range sync failed',
+                                        platform: 'woocommerce',
+                                        storeId: pipelineStoreId,
+                                        canonicalProductId: canonicalProduct.canonicalProductId,
+                                        error: priceError?.message || String(priceError)
+                                });
+                        }
+                }
+
+                return { success: true, sourceId };
+        } catch (error) {
+                logger.error({
+                        message: 'WooCommerce webhook single-product processing error',
+                        platform: 'woocommerce',
+                        storeId: pipelineStoreId,
+                        sourceId: rawProduct?.id || null,
+                        error: error?.message || String(error)
+                });
+                return { success: false, sourceId: rawProduct?.id || null, error: error?.message || String(error) };
+        }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Inventory & Deactivation Handlers                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Handle Shopify inventory_levels/update webhook.
+ * Finds the variant by inventory_item_id and updates offer availability.
+ *
+ * @param {object} payload — { inventory_item_id, available, location_id, ... }
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, error?:string}>}
+ */
+async function handleInventoryLevelUpdate(payload, storeId) {
+        const pipelineStoreId = storeId || 'store_shopify_001';
+        const inventoryItemId = payload?.inventory_item_id;
+        const available = typeof payload?.available === 'number' ? payload.available : null;
+
+        if (!inventoryItemId) {
+                logger.warn({
+                        message: 'Shopify inventory webhook missing inventory_item_id',
+                        platform: 'shopify',
+                        storeId: pipelineStoreId
+                });
+                return { success: false, error: 'Missing inventory_item_id' };
+        }
+
+        try {
+                await connectDB();
+
+                /* Search raw_responses for a Shopify product containing this inventory_item_id */
+                const rawCollection = mongoose.connection.collection('raw_responses');
+                const rawDoc = await rawCollection.findOne({
+                        platform: 'shopify',
+                        storeId: pipelineStoreId,
+                        'data.variants.inventory_item_id': inventoryItemId
+                });
+
+                let sku = null;
+
+                if (rawDoc?.data?.variants) {
+                        const matchingVariant = Array.isArray(rawDoc.data.variants)
+                                ? rawDoc.data.variants.find((v) => v?.inventory_item_id === inventoryItemId)
+                                : null;
+                        sku = matchingVariant?.sku || null;
+                }
+
+                if (!sku) {
+                        /* Fallback: search canonical products collection */
+                        const productsCollection = mongoose.connection.collection('products');
+                        const product = await productsCollection.findOne({
+                                source: 'shopify',
+                                storeId: pipelineStoreId,
+                                'variants.inventoryItemId': inventoryItemId
+                        });
+
+                        if (product?.variants) {
+                                const variant = product.variants.find(
+                                        (v) => v?.inventoryItemId === inventoryItemId
+                                );
+                                sku = variant?.sku || null;
+                        }
+                }
+
+                if (!sku) {
+                        logger.warn({
+                                message: 'Shopify inventory webhook — could not resolve SKU for inventory_item_id',
+                                platform: 'shopify',
+                                storeId: pipelineStoreId,
+                                inventoryItemId,
+                                available
+                        });
+                        return { success: false, error: 'SKU not found for inventory_item_id' };
+                }
+
+                const isInStock = available === null ? true : available > 0;
+                const inventoryPatch = {
+                        availability: isInStock ? 'in_stock' : 'out_of_stock',
+                        stockQty: available,
+                        isInStock,
+                        availableInventory: available,
+                        lastSyncedAt: new Date().toISOString(),
+                        inventorySource: 'shopify_webhook'
+                };
+
+                const result = await updateOfferInventory(sku, inventoryPatch, pipelineStoreId);
+
+                logger.info({
+                        message: 'Shopify inventory webhook processed',
+                        platform: 'shopify',
+                        storeId: pipelineStoreId,
+                        inventoryItemId,
+                        sku,
+                        available,
+                        offersMatched: result?.offersMatched || 0,
+                        offersModified: result?.offersModified || 0
+                });
+
+                return { success: true };
+        } catch (error) {
+                logger.error({
+                        message: 'Shopify inventory webhook processing error',
+                        platform: 'shopify',
+                        storeId: pipelineStoreId,
+                        inventoryItemId,
+                        error: error?.message || String(error)
+                });
+                return { success: false, error: error?.message || String(error) };
+        }
+}
+
+/**
+ * Mark a product as inactive in MongoDB (soft delete — don't actually remove).
+ *
+ * @param {string} platform — 'shopify' | 'woocommerce'
+ * @param {string} sourceId — platform-specific product ID
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, error?:string}>}
+ */
+async function markProductInactive(platform, sourceId, storeId) {
+        if (!platform || !sourceId || !storeId) {
+                logger.warn({
+                        message: 'markProductInactive called with missing arguments',
+                        service: 'webhook',
+                        platform: platform || null,
+                        sourceId: sourceId || null,
+                        storeId: storeId || null
+                });
+                return { success: false, error: 'Missing required arguments' };
+        }
+
+        try {
+                await connectDB();
+
+                const productsCollection = mongoose.connection.collection('products');
+
+                const result = await productsCollection.updateOne(
+                        { sourceId, source: platform, storeId },
+                        {
+                                $set: {
+                                        status: 'inactive',
+                                        updatedAt: new Date().toISOString(),
+                                        lastSyncedAt: new Date().toISOString()
+                                }
+                        }
+                );
+
+                if (result.matchedCount === 0) {
+                        logger.warn({
+                                message: 'Product not found for deactivation',
+                                platform,
+                                storeId,
+                                sourceId
+                        });
+                        return { success: false, error: 'Product not found' };
+                }
+
+                /* Also mark related offers as out_of_stock */
+                const offersCollection = mongoose.connection.collection('offers');
+                const offersResult = await offersCollection.updateMany(
+                    { sourceId, storeId },
+                    {
+                        $set: {
+                            availability: 'out_of_stock',
+                            isInStock: false,
+                            lastSyncedAt: new Date().toISOString()
+                        }
+                    }
+                );
+
+                logger.info({
+                        message: 'Product marked inactive via webhook',
+                        platform,
+                        storeId,
+                        sourceId,
+                        productsMatched: result.matchedCount,
+                        offersUpdated: offersResult.modifiedCount
+                });
+
+                return { success: true };
+        } catch (error) {
+                logger.error({
+                        message: 'Failed to mark product inactive',
+                        platform,
+                        storeId,
+                        sourceId,
+                        error: error?.message || String(error)
+                });
+                return { success: false, error: error?.message || String(error) };
+        }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main Webhook Routing Functions                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Process a Shopify webhook by routing to the correct handler based on topic.
+ *
+ * @param {string} topic   — e.g. 'products/create', 'products/update', 'products/delete', 'inventory_levels/update'
+ * @param {object} payload — parsed JSON body
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, topic:string, error?:string}>}
+ */
+async function processShopifyWebhook(topic, payload, storeId) {
+        const pipelineStoreId = storeId || 'store_shopify_001';
+
+        logger.info({
+                message: 'Shopify webhook received',
+                platform: 'shopify',
+                topic,
+                storeId: pipelineStoreId,
+                sourceId: payload?.id || null
+        });
+
+        let result;
+
+        try {
+                switch (topic) {
+                        case 'products/create':
+                        case 'products/update':
+                                result = await processSingleShopifyProduct(payload, pipelineStoreId);
+                                break;
+
+                        case 'products/delete':
+                            result = await markProductInactive(
+                                'shopify',
+                                payload?.id != null
+                                    ? (String(payload.id).startsWith('gid://')
+                                        ? String(payload.id)
+                                        : `gid://shopify/Product/${payload.id}`)
+                                    : null,
+                                pipelineStoreId
+                            );
+                            break;
+
+                        case 'inventory_levels/update':
+                                result = await handleInventoryLevelUpdate(payload, pipelineStoreId);
+                                break;
+
+                        default:
+                                logger.info({
+                                        message: 'Unhandled Shopify webhook topic — skipping',
+                                        platform: 'shopify',
+                                        topic,
+                                        storeId: pipelineStoreId
+                                });
+                                result = { success: true, skipped: true, reason: `Unhandled topic: ${topic}` };
+                }
+        } catch (error) {
+                logger.error({
+                        message: 'Shopify webhook processing error',
+                        platform: 'shopify',
+                        topic,
+                        storeId: pipelineStoreId,
+                        error: error?.message || String(error)
+                });
+                result = { success: false, error: error?.message || String(error) };
+        }
+
+        logger.info({
+                message: 'Shopify webhook processing complete',
+                platform: 'shopify',
+                topic,
+                storeId: pipelineStoreId,
+                outcome: result?.success ? 'success' : 'failed',
+                error: result?.error || null
+        });
+
+        return { ...result, topic };
+}
+
+/**
+ * Process a WooCommerce webhook by routing to the correct handler based on topic.
+ *
+ * @param {string} topic   — e.g. 'product.created', 'product.updated', 'product.deleted'
+ * @param {object} payload — parsed JSON body
+ * @param {string} storeId
+ * @returns {Promise<{success:boolean, topic:string, error?:string}>}
+ */
+async function processWooCommerceWebhook(topic, payload, storeId) {
+        const pipelineStoreId = storeId || 'store_woo_001';
+
+        logger.info({
+                message: 'WooCommerce webhook received',
+                platform: 'woocommerce',
+                topic,
+                storeId: pipelineStoreId,
+                sourceId: payload?.id || null
+        });
+
+        let result;
+
+        try {
+                switch (topic) {
+                        case 'product.created':
+                        case 'product.updated':
+                                result = await processSingleWooProduct(payload, pipelineStoreId);
+                                break;
+
+                        case 'product.deleted':
+                                result = await markProductInactive(
+                                        'woocommerce',
+                                        payload?.id != null ? String(payload.id) : null,
+                                        pipelineStoreId
+                                );
+                                break;
+
+                        default:
+                                logger.info({
+                                        message: 'Unhandled WooCommerce webhook topic — skipping',
+                                        platform: 'woocommerce',
+                                        topic,
+                                        storeId: pipelineStoreId
+                                });
+                                result = { success: true, skipped: true, reason: `Unhandled topic: ${topic}` };
+                }
+        } catch (error) {
+                logger.error({
+                        message: 'WooCommerce webhook processing error',
+                        platform: 'woocommerce',
+                        topic,
+                        storeId: pipelineStoreId,
+                        error: error?.message || String(error)
+                });
+                result = { success: false, error: error?.message || String(error) };
+        }
+
+        logger.info({
+                message: 'WooCommerce webhook processing complete',
+                platform: 'woocommerce',
+                topic,
+                storeId: pipelineStoreId,
+                outcome: result?.success ? 'success' : 'failed',
+                error: result?.error || null
+        });
+
+        return { ...result, topic };
+}
+
+module.exports = {
+        verifyShopifyHmac,
+        verifyWooCommerceSignature,
+        processShopifyWebhook,
+        processWooCommerceWebhook,
+        adaptShopifyRestToGraphql,
+        markProductInactive,
+        handleInventoryLevelUpdate
+};

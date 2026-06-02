@@ -8,6 +8,7 @@ const logger = require('./services/logger.service');
 const { connectDB } = require('./services/db.service');
 const { loadSchedules } = require('./services/scheduler.service');
 const schedulerRoutes = require('./connectors/scheduler.routes');
+const webhookRoutes = require('./connectors/webhook.routes');         
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
@@ -17,6 +18,7 @@ const { runBigCommerceFullSync } = require('./pipelines/bigcommerce.pipeline');
 const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline');
 
 const app = express();
+app.use('/webhooks', webhookRoutes);
 app.use(express.json());
 app.use('/scheduler', schedulerRoutes);
 
