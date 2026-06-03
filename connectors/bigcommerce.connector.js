@@ -177,9 +177,6 @@ async function loadBrands() {
 
   while (true) {
     const params = { limit: DEFAULT_PAGE_SIZE, page: currentPage };
-    if (since) {
-      params['date_modified:min'] = since.toISOString();
-    }
     const response = await requestWithRetry(
       () => http.get(buildV3Url('/catalog/brands'), { headers, params }),
       { page: currentPage }
