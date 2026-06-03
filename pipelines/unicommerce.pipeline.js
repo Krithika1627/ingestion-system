@@ -14,9 +14,10 @@ const {
  * Run Unicommerce inventory sync.
  * @param {string} storeId
  * @param {string} facilityCode
+ * @param {Date|null} [since] - Optional: only fetch items updated after this date (in-memory filter)
  * @returns {Promise<{total:number, updated:number, skipped:number, failed:number, duration:number}>}
  */
-async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', facilityCode) {
+async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', facilityCode, since) {
   const pipelineStoreId = storeId || 'store_unicommerce_001';
   const startTime = Date.now();
 
@@ -41,7 +42,8 @@ async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', fa
       metaData: storeRecord?.metaData || {},
       syncConfig: storeRecord?.syncConfig || {}
     },
-    resolvedFacility
+    resolvedFacility,
+    since
   );
 
   let updated = 0;

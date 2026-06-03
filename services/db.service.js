@@ -581,6 +581,7 @@ async function upsertCategory(canonicalCategory) {
 
 module.exports = {
   connectDB,
+  getCollection,
   upsertProduct,
   upsertRaw,
   upsertOffer,

@@ -144,15 +144,16 @@ function hasUnmatchedCategories(categoryIds, categoryIdSet, rawCategoryCount) {
 /**
  * Run Shopify product ingestion pipeline.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products updated after this date
  * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
  */
-async function runShopifyProductPipeline(storeId) {
+async function runShopifyProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_shopify_001';
   const startTime = Date.now();
 
   await connectDB();
 
-  const rawProducts = await fetchShopifyProducts(pipelineStoreId);
+  const rawProducts = await fetchShopifyProducts(pipelineStoreId, since);
   const summary = {
     total: rawProducts.length,
     success: 0,
@@ -433,9 +434,10 @@ async function runShopifyProductPipeline(storeId) {
 /**
  * Run Magento product ingestion pipeline.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products updated after this date
  * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
  */
-async function runMagentoProductPipeline(storeId) {
+async function runMagentoProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_magento_001';
   const startTime = Date.now();
   const storeBaseUrl = process.env.MAGENTO_STORE_URL || '';
@@ -450,7 +452,7 @@ async function runMagentoProductPipeline(storeId) {
 
   await connectDB();
 
-  const rawProducts = await fetchMagentoProducts({ id: pipelineStoreId });
+  const rawProducts = await fetchMagentoProducts({ id: pipelineStoreId }, since);
   const summary = {
     total: rawProducts.length,
     success: 0,
@@ -721,9 +723,10 @@ async function runMagentoProductPipeline(storeId) {
 /**
  * Run WooCommerce product ingestion pipeline.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products updated after this date
  * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
  */
-async function runWooProductPipeline(storeId) {
+async function runWooProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_woo_001';
   const startTime = Date.now();
 
@@ -735,7 +738,7 @@ async function runWooProductPipeline(storeId) {
   const rawProducts = await fetchWooProducts({
     id: pipelineStoreId,
     syncConfig: storeRecord?.syncConfig || {}
-  });
+  }, since);
   const summary = {
     total: rawProducts.length,
     success: 0,
@@ -1009,9 +1012,10 @@ async function runWooProductPipeline(storeId) {
 /**
  * Run BigCommerce product ingestion pipeline.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products modified after this date
  * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
  */
-async function runBigCommerceProductPipeline(storeId) {
+async function runBigCommerceProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_bigcommerce_001';
   const startTime = Date.now();
 
@@ -1023,7 +1027,7 @@ async function runBigCommerceProductPipeline(storeId) {
   const fetchResult = await fetchBigCommerceProducts({
     id: pipelineStoreId,
     syncConfig: storeRecord?.syncConfig || {}
-  });
+  }, since);
 
   const rawProducts = Array.isArray(fetchResult)
     ? fetchResult

@@ -122,10 +122,12 @@ async function requestWithRetry(requestFn, context) {
 
 /**
  * Fetch all products from Magento with pagination.
+ * Supports incremental sync via optional since parameter.
  * @param {object|string} store
+ * @param {Date|null} [since] - Only fetch products updated after this date
  * @returns {Promise<object[]>}
  */
-async function fetchProducts(store) {
+async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
   const pageSize = syncConfig.batchSize || DEFAULT_PAGE_SIZE;
@@ -147,7 +149,24 @@ async function fetchProducts(store) {
       storeId
     });
     const mock = loadMockData();
-    const items = mock?.products?.items || [];
+    let items = mock?.products?.items || [];
+
+    if (since) {
+      const sinceTime = new Date(since).getTime();
+      items = items.filter((item) => {
+        const updated = item?.updated_at ? new Date(item.updated_at).getTime() : 0;
+        return updated >= sinceTime;
+      });
+      logger.info({
+        message: 'Magento mock incremental filter applied',
+        platform: 'magento',
+        storeId,
+        since: since.toISOString(),
+        filteredCount: items.length,
+        totalInMock: (mock?.products?.items || []).length
+      });
+    }
+
     logger.info({
       message: 'Magento product sync complete',
       platform: 'magento',
@@ -169,6 +188,12 @@ async function fetchProducts(store) {
     const params = new URLSearchParams();
     params.append('searchCriteria[pageSize]', String(pageSize));
     params.append('searchCriteria[currentPage]', String(currentPage));
+
+    if (since) {
+      params.append('searchCriteria[filter_groups][0][filters][0][field]', 'updated_at');
+      params.append('searchCriteria[filter_groups][0][filters][0][value]', since.toISOString());
+      params.append('searchCriteria[filter_groups][0][filters][0][condition_type]', 'gteq');
+    }
 
     const data = await requestWithRetry(
       async () => {

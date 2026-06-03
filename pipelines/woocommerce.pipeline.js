@@ -103,9 +103,10 @@ async function enrichWooCommerceProductCategories(storeId) {
 /**
  * Run the full WooCommerce sync in the correct order.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products updated after this date
  * @returns {Promise<{categorySummary: object, productSummary: object}>}
  */
-async function runWooFullSync(storeId = 'store_woo_001') {
+async function runWooFullSync(storeId = 'store_woo_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_woo_001';
 
@@ -116,7 +117,7 @@ async function runWooFullSync(storeId = 'store_woo_001') {
   });
 
   const categorySummary = await runWooCategoryPipeline(pipelineStoreId);
-  const productSummary = await runWooProductPipeline(pipelineStoreId);
+  const productSummary = await runWooProductPipeline(pipelineStoreId, since);
   const enrichmentSummary = await enrichWooCommerceProductCategories(pipelineStoreId);
 
   await updateStoreLastSynced(pipelineStoreId);

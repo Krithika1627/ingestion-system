@@ -9,9 +9,10 @@ const { updateStoreLastSynced } = require('../services/db.service');
 /**
  * Run BigCommerce full sync (categories then products).
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products modified after this date
  * @returns {Promise<{categorySummary: object, productSummary: object}>}
  */
-async function runBigCommerceFullSync(storeId = 'store_bigcommerce_001') {
+async function runBigCommerceFullSync(storeId = 'store_bigcommerce_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_bigcommerce_001';
 
@@ -22,7 +23,7 @@ async function runBigCommerceFullSync(storeId = 'store_bigcommerce_001') {
   });
 
   const categorySummary = await runBigCommerceCategoryPipeline(pipelineStoreId);
-  const productSummary = await runBigCommerceProductPipeline(pipelineStoreId);
+  const productSummary = await runBigCommerceProductPipeline(pipelineStoreId, since);
 
   await updateStoreLastSynced(pipelineStoreId);
 

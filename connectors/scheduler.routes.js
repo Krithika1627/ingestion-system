@@ -4,7 +4,8 @@ const {
   addSchedule,
   removeSchedule,
   updateSchedule,
-  getActiveJobs
+  getActiveJobs,
+  triggerSync
 } = require('../services/scheduler.service');
 
 const router = express.Router();
@@ -69,6 +70,29 @@ router.put('/:storeId', async (req, res) => {
       error: error?.message || String(error)
     });
     res.status(status).json({ success: false, error: error?.message || 'Failed to update schedule' });
+  }
+});
+
+router.post('/sync/:storeId', async (req, res) => {
+  try {
+    const { storeId } = req.params || {};
+    const { force } = req.body || {};
+    if (!storeId) {
+      res.status(400).json({ success: false, error: 'storeId required' });
+      return;
+    }
+
+    const result = await triggerSync(storeId, { force: force === true });
+    res.json({ success: true, message: 'Sync completed', ...result });
+  } catch (error) {
+    const status = error?.message?.includes('No schedule found') ? 404 : 500;
+    logger.error({
+      message: 'Manual sync failed',
+      service: 'scheduler',
+      storeId: req?.params?.storeId || null,
+      error: error?.message || String(error)
+    });
+    res.status(status).json({ success: false, error: error?.message || 'Manual sync failed' });
   }
 });
 

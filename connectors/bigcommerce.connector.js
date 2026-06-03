@@ -177,6 +177,9 @@ async function loadBrands() {
 
   while (true) {
     const params = { limit: DEFAULT_PAGE_SIZE, page: currentPage };
+    if (since) {
+      params['date_modified:min'] = since.toISOString();
+    }
     const response = await requestWithRetry(
       () => http.get(buildV3Url('/catalog/brands'), { headers, params }),
       { page: currentPage }
@@ -215,10 +218,12 @@ async function loadBrands() {
 
 /**
  * Fetch all products from BigCommerce with pagination.
+ * Supports incremental sync via optional since parameter.
  * @param {object|string} store
+ * @param {Date|null} [since] - Only fetch products modified after this date
  * @returns {Promise<{products: object[], brandMap: Map}>}
  */
-async function fetchProducts(store) {
+async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
   const pageSize = Math.min(syncConfig.batchSize || DEFAULT_PAGE_SIZE, DEFAULT_PAGE_SIZE);
@@ -245,9 +250,30 @@ async function fetchProducts(store) {
     const mockBrandMap = new Map(
       (mock?.[0]?.brandsAPI?.data || []).map((brand) => [brand.id, brand.name])
     );
-    const allProducts = Array.isArray(mock)
+    let allProducts = Array.isArray(mock)
       ? mock.flatMap((entry) => entry?.productsAPI?.data || [])
       : [];
+
+    if (since) {
+      const sinceTime = new Date(since).getTime();
+      const totalBefore = allProducts.length;
+      allProducts = allProducts.filter((product) => {
+        const modified = product?.date_modified
+          ? new Date(product.date_modified).getTime()
+          : product?.updated_at
+            ? new Date(product.updated_at).getTime()
+            : 0;
+        return modified >= sinceTime;
+      });
+      logger.info({
+        message: 'BigCommerce mock incremental filter applied',
+        platform: 'bigcommerce',
+        storeId,
+        since: since.toISOString(),
+        filteredCount: allProducts.length,
+        totalInMock: totalBefore
+      });
+    }
 
     const resolved = allProducts.map((product) => ({
       ...product,
@@ -280,6 +306,10 @@ async function fetchProducts(store) {
       limit: pageSize,
       page: currentPage
     };
+
+    if (since) {
+      params['date_modified:min'] = since.toISOString();
+    }
 
     const response = await requestWithRetry(
       () => http.get(buildV3Url('/catalog/products'), { headers, params }),

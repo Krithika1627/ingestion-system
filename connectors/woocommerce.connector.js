@@ -126,10 +126,12 @@ async function requestWithRetry(requestFn, context) {
 
 /**
  * Fetch all products from WooCommerce with pagination.
+ * Supports incremental sync via optional since parameter.
  * @param {object|string} store
+ * @param {Date|null} [since] - Only fetch products updated after this date
  * @returns {Promise<object[]>}
  */
-async function fetchProducts(store) {
+async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
   const pageSize = Math.min(syncConfig.batchSize || DEFAULT_PAGE_SIZE, 100);
@@ -154,9 +156,26 @@ async function fetchProducts(store) {
 
     const mock = loadMockData();
 
-    const items = Array.isArray(mock)
+    let items = Array.isArray(mock)
       ? mock.flatMap(entry => entry.products || [])
       : [];
+
+    if (since) {
+      const sinceTime = new Date(since).getTime();
+      const totalBefore = items.length;
+      items = items.filter((item) => {
+        const modified = item?.date_modified ? new Date(item.date_modified).getTime() : 0;
+        return modified >= sinceTime;
+      });
+      logger.info({
+        message: 'WooCommerce mock incremental filter applied',
+        platform: 'woocommerce',
+        storeId,
+        since: since.toISOString(),
+        filteredCount: items.length,
+        totalInMock: totalBefore
+      });
+    }
 
     logger.info({
       message: 'WooCommerce product sync complete',
@@ -174,7 +193,11 @@ async function fetchProducts(store) {
   const allItems = [];
 
   while (true) {
-    const url = buildUrl('/products', { per_page: pageSize, page: currentPage });
+    const urlParams = { per_page: pageSize, page: currentPage };
+    if (since) {
+      urlParams.after = since.toISOString();
+    }
+    const url = buildUrl('/products', urlParams);
 
     const response = await requestWithRetry(
       () => http.get(url, {

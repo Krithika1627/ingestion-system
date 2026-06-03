@@ -155,11 +155,13 @@ async function requestWithRetry(requestFn, context) {
 
 /**
  * Fetch inventory snapshots from Unicommerce.
+ * Supports incremental sync via optional since parameter (in-memory filter — no server-side support).
  * @param {object|string} store
  * @param {string} facilityCode
+ * @param {Date|null} [since] - Only fetch items updated after this date (in-memory filter)
  * @returns {Promise<object[]>}
  */
-async function fetchInventorySnapshots(store, facilityCode) {
+async function fetchInventorySnapshots(store, facilityCode, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
   const pageSize = syncConfig.batchSize || DEFAULT_PAGE_SIZE;
@@ -167,6 +169,16 @@ async function fetchInventorySnapshots(store, facilityCode) {
   const retryAttempts = syncConfig.retryAttempts || DEFAULT_RETRY_ATTEMPTS;
   const startTime = Date.now();
   const mode = USE_MOCK ? 'mock' : 'real';
+
+  if (since) {
+    logger.info({
+      message: 'Unicommerce does not support server-side delta filtering, running full fetch with in-memory filter',
+      platform: 'unicommerce',
+      storeId,
+      since: since.toISOString()
+    });
+  }
+
   const resolvedFacility =
     facilityCode || store?.metaData?.facilityCode || process.env.UNICOMMERCE_FACILITY_CODE || null;
 
@@ -244,15 +256,38 @@ async function fetchInventorySnapshots(store, facilityCode) {
     pageNumber += 1;
   }
 
+  let resultSnapshots = allSnapshots;
+
+  if (since) {
+    const sinceTime = new Date(since).getTime();
+    const totalBefore = resultSnapshots.length;
+    resultSnapshots = resultSnapshots.filter((snapshot) => {
+      const updated = snapshot?.updatedAt
+        ? new Date(snapshot.updatedAt).getTime()
+        : snapshot?.inventorySnapshotDate
+          ? new Date(snapshot.inventorySnapshotDate).getTime()
+          : 0;
+      return updated >= sinceTime;
+    });
+    logger.info({
+      message: 'Unicommerce in-memory incremental filter applied',
+      platform: 'unicommerce',
+      storeId,
+      since: since.toISOString(),
+      filteredCount: resultSnapshots.length,
+      totalBefore
+    });
+  }
+
   logger.info({
     message: 'Unicommerce inventory sync complete',
     platform: 'unicommerce',
     storeId,
-    total: allSnapshots.length,
+    total: resultSnapshots.length,
     durationSec: Number(((Date.now() - startTime) / 1000).toFixed(2))
   });
 
-  return allSnapshots;
+  return resultSnapshots;
 }
 
 module.exports = { fetchInventorySnapshots };

@@ -3,6 +3,7 @@ const { CronExpressionParser } = require('cron-parser');
 const logger = require('./logger.service');
 const { SyncConfig, DEFAULT_CRON_BY_PLATFORM } = require('../models/sync_config.model');
 const { connectDB, getStoreById } = require('./db.service');
+const { getSyncWindow, updateSyncTimestamp } = require('./incremental-sync.service');
 const { runShopifyFullSync } = require('../pipelines/shopify.pipeline');
 const { runMagentoFullSync } = require('../pipelines/magento.pipeline');
 const { runWooFullSync } = require('../pipelines/woocommerce.pipeline');
@@ -28,19 +29,27 @@ function resolveNextRunAt(cronExpression) {
   }
 }
 
-async function runPlatformSync(platform, storeId) {
+async function runPlatformSync(platform, storeId, since) {
   switch (platform) {
     case 'shopify':
-      return runShopifyFullSync(storeId);
+      return runShopifyFullSync(storeId, since);
     case 'magento':
-      return runMagentoFullSync(storeId || 'store_magento_001');
+      return runMagentoFullSync(storeId || 'store_magento_001', since);
     case 'woocommerce':
-      return runWooFullSync(storeId || 'store_woo_001');
+      return runWooFullSync(storeId || 'store_woo_001', since);
     case 'bigcommerce':
-      return runBigCommerceFullSync(storeId || 'store_bigcommerce_001');
+      return runBigCommerceFullSync(storeId || 'store_bigcommerce_001', since);
     case 'unicommerce':
-      return runUnicommerceInventorySync(storeId || 'store_unicommerce_001');
+      return runUnicommerceInventorySync(storeId || 'store_unicommerce_001', null, since);
     case 'scraped': {
+      if (since) {
+        logger.info({
+          message: 'Scraped sites do not support incremental sync, running full scrape',
+          service: 'scheduler',
+          platform: 'scraped',
+          storeId
+        });
+      }
       const store = await getStoreById(storeId);
       const storeUrl = store?.credentials?.storeUrl || store?.domain || null;
       if (!storeUrl) {
@@ -97,7 +106,17 @@ async function registerJob(config) {
 
     let outcome = 'success';
     try {
-      await runPlatformSync(config.platform, config.storeId);
+      const { since, isFullSync } = await getSyncWindow(config.storeId);
+      logger.info({
+        message: 'Sync window resolved for scheduler job',
+        service: 'scheduler',
+        storeId: config.storeId,
+        platform: config.platform,
+        isFullSync,
+        since: since ? since.toISOString() : null
+      });
+
+      await runPlatformSync(config.platform, config.storeId, since);
     } catch (error) {
       outcome = 'failed';
       logger.warn({
@@ -112,6 +131,7 @@ async function registerJob(config) {
       const durationMs = Date.now() - startedAt.getTime();
       const nextRunAt = resolveNextRunAt(config.cronExpression);
       await updateRunTimestamps(config, nextRunAt, startedAt);
+      await updateSyncTimestamp(config.storeId, outcome);
       logger.info({
         message: 'Scheduler job finished',
         service: 'scheduler',
@@ -209,6 +229,49 @@ async function updateSchedule(storeId, cronExpression) {
   return saved;
 }
 
+/**
+ * Trigger an immediate sync for a store. Respects lastSyncedAt unless force is true.
+ * @param {string} storeId
+ * @param {object} [options]
+ * @param {boolean} [options.force] - If true, ignores lastSyncedAt and runs a full sync
+ * @returns {Promise<{success: boolean, isFullSync: boolean, platform: string|null, storeId: string}>}
+ */
+async function triggerSync(storeId, options = {}) {
+  const config = scheduleConfigs.get(storeId);
+  if (!config) {
+    throw new Error(`No schedule found for store: ${storeId}`);
+  }
+
+  const force = options?.force === true;
+  let since = null;
+  let isFullSync = true;
+
+  if (!force) {
+    const window = await getSyncWindow(storeId);
+    since = window.since;
+    isFullSync = window.isFullSync;
+  }
+
+  logger.info({
+    message: 'Manual sync triggered',
+    service: 'scheduler',
+    storeId,
+    platform: config.platform,
+    isFullSync,
+    force,
+    since: since ? since.toISOString() : null
+  });
+
+  try {
+    await runPlatformSync(config.platform, storeId, since);
+    await updateSyncTimestamp(storeId, 'success');
+    return { success: true, isFullSync, platform: config.platform, storeId };
+  } catch (error) {
+    await updateSyncTimestamp(storeId, 'failed');
+    throw error;
+  }
+}
+
 function getActiveJobs() {
   const jobs = [];
   for (const [storeId, task] of scheduleMap.entries()) {
@@ -230,5 +293,6 @@ module.exports = {
   addSchedule,
   removeSchedule,
   updateSchedule,
-  getActiveJobs
+  getActiveJobs,
+  triggerSync
 };

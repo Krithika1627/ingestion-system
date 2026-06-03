@@ -121,9 +121,10 @@ async function enrichMagentoProductCategoryIds(storeId) {
 /**
  * Run the full Magento sync in the correct order.
  * @param {string} storeId
+ * @param {Date|null} [since] - Optional: only fetch products updated after this date
  * @returns {Promise<{categorySummary: object, productSummary: object}>}
  */
-async function runMagentoFullSync(storeId = 'store_magento_001') {
+async function runMagentoFullSync(storeId = 'store_magento_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_magento_001';
 
@@ -134,7 +135,7 @@ async function runMagentoFullSync(storeId = 'store_magento_001') {
   });
 
   const categorySummary = await runMagentoCategoryPipeline(pipelineStoreId);
-  const productSummary = await runMagentoProductPipeline(pipelineStoreId);
+  const productSummary = await runMagentoProductPipeline(pipelineStoreId, since);
 
   await enrichMagentoProductCategoryIds(pipelineStoreId);
 

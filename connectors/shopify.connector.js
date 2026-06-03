@@ -12,8 +12,8 @@ const MAX_RETRIES = 3;
 const RETRY_STATUSES = new Set([429, 500, 502, 503]);
 
 const PRODUCTS_QUERY = `
-  query Products($first: Int!, $after: String) {
-    products(first: $first, after: $after) {
+  query Products($first: Int!, $after: String, $since: String) {
+    products(first: $first, after: $after, query: $since) {
       edges {
         node {
           id
@@ -245,10 +245,12 @@ async function requestGraphQL(payload, context) {
 
 /**
  * Fetch all products from Shopify with cursor-based pagination.
+ * Supports incremental sync via optional since parameter.
  * @param {string} storeId
+ * @param {Date|null} [since] - Only fetch products updated after this date
  * @returns {Promise<object[]>}
  */
-async function fetchProducts(storeId) {
+async function fetchProducts(storeId, since) {
   const startTime = Date.now();
   const context = { storeId };
   let hasNextPage = true;
@@ -258,11 +260,24 @@ async function fetchProducts(storeId) {
 
   logger.info({ message: 'Shopify product sync started', platform: 'shopify', ...context });
 
+  if (since) {
+    logger.info({
+      message: 'Shopify incremental sync filter applied',
+      platform: 'shopify',
+      since: since.toISOString(),
+      ...context
+    });
+  }
+
   while (hasNextPage) {
     page += 1;
+    const variables = { first: DEFAULT_PAGE_SIZE, after: cursor };
+    if (since) {
+      variables.since = `updated_at:>=${since.toISOString()}`;
+    }
     const payload = {
       query: PRODUCTS_QUERY,
-      variables: { first: DEFAULT_PAGE_SIZE, after: cursor }
+      variables
     };
 
     const data = await requestGraphQL(payload, { ...context, page });
