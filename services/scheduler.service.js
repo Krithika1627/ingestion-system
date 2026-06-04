@@ -4,6 +4,7 @@ const logger = require('./logger.service');
 const { SyncConfig, DEFAULT_CRON_BY_PLATFORM } = require('../models/sync_config.model');
 const { connectDB, getStoreById } = require('./db.service');
 const { getSyncWindow, updateSyncTimestamp } = require('./incremental-sync.service');
+const { executeWithRetry } = require('./retry.service');
 const { runShopifyFullSync } = require('../pipelines/shopify.pipeline');
 const { runMagentoFullSync } = require('../pipelines/magento.pipeline');
 const { runWooFullSync } = require('../pipelines/woocommerce.pipeline');
@@ -104,23 +105,50 @@ async function registerJob(config) {
       platform: config.platform
     });
 
-    let outcome = 'success';
     try {
-      const { since, isFullSync } = await getSyncWindow(config.storeId);
+      const syncWindow = await getSyncWindow(config.storeId);
+      if (syncWindow?.since) {
+        syncWindow.since = new Date(syncWindow.since);
+      }
       logger.info({
         message: 'Sync window resolved for scheduler job',
         service: 'scheduler',
         storeId: config.storeId,
         platform: config.platform,
-        isFullSync,
-        since: since ? since.toISOString() : null
+        isFullSync: syncWindow.isFullSync,
+        since: syncWindow.since ? syncWindow.since.toISOString() : null
       });
 
-      await runPlatformSync(config.platform, config.storeId, since);
+      const syncFn = (storeId, window) =>
+        runPlatformSync(config.platform, storeId, window.since);
+
+      const result = await executeWithRetry(config, syncFn, syncWindow);
+
+      if (result.success) {
+        await updateSyncTimestamp(config.storeId, 'success');
+        logger.info({
+          message: 'Scheduler job finished',
+          service: 'scheduler',
+          storeId: config.storeId,
+          platform: config.platform,
+          outcome: 'success',
+          attempts: result.attempts
+        });
+      } else {
+        await updateSyncTimestamp(config.storeId, 'failed');
+        logger.warn({
+          message: 'Scheduler job dead-lettered',
+          service: 'scheduler',
+          storeId: config.storeId,
+          platform: config.platform,
+          outcome: 'failed',
+          attempts: result.attempts
+        });
+      }
     } catch (error) {
-      outcome = 'failed';
+      await updateSyncTimestamp(config.storeId, 'failed');
       logger.warn({
-        message: 'Scheduler job failed',
+        message: 'Scheduler job failed unexpectedly',
         service: 'scheduler',
         storeId: config.storeId,
         platform: config.platform,
@@ -128,18 +156,8 @@ async function registerJob(config) {
       });
     } finally {
       runningJobs.delete(config.storeId);
-      const durationMs = Date.now() - startedAt.getTime();
       const nextRunAt = resolveNextRunAt(config.cronExpression);
       await updateRunTimestamps(config, nextRunAt, startedAt);
-      await updateSyncTimestamp(config.storeId, outcome);
-      logger.info({
-        message: 'Scheduler job finished',
-        service: 'scheduler',
-        storeId: config.storeId,
-        platform: config.platform,
-        outcome,
-        durationMs
-      });
     }
   });
 
@@ -294,5 +312,6 @@ module.exports = {
   removeSchedule,
   updateSchedule,
   getActiveJobs,
-  triggerSync
+  triggerSync,
+  runPlatformSync
 };

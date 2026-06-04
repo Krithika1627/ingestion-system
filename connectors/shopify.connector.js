@@ -260,6 +260,9 @@ async function fetchProducts(storeId, since) {
 
   logger.info({ message: 'Shopify product sync started', platform: 'shopify', ...context });
 
+  if (since && !(since instanceof Date)) {
+    since = new Date(since);
+  }
   if (since) {
     logger.info({
       message: 'Shopify incremental sync filter applied',
