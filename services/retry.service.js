@@ -75,7 +75,7 @@ async function writeToDeadLetterQueue(config, error, attemptNumber, syncWindow) 
  */
 async function executeWithRetry(config, syncFn, syncWindow) {
   const MAX_ATTEMPTS = 3;
-  const DELAYS = [0, 3000, 6000]; // attempt 1: no wait, attempt 2: 1min, attempt 3: 5min
+  const DELAYS = [0, 60000, 300000]; // attempt 1: no wait, attempt 2: 1min, attempt 3: 5min
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     // Wait before this attempt (attempt 1 has no delay)

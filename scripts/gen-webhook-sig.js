@@ -33,7 +33,11 @@ require('dotenv').config();
 const crypto = require('crypto');
 const fs = require('fs');
 const secret = process.env.SHOPIFY_WEBHOOK_SECRET || 'test-secret';
-const body = JSON.stringify({ id: 15542604824945 });   // ← numeric ID like Shopify sends
+const body = JSON.stringify({
+  id: 15542604824945,
+  title: "Webhook Test Title",
+  variants: []
+});
 const hmac = crypto.createHmac('sha256', secret).update(body).digest('base64');
 fs.writeFileSync('test-delete-body.json', body);
 console.log('Body:', body);
