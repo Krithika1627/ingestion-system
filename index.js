@@ -8,7 +8,10 @@ const logger = require('./services/logger.service');
 const { connectDB } = require('./services/db.service');
 const { loadSchedules } = require('./services/scheduler.service');
 const schedulerRoutes = require('./connectors/scheduler.routes');
-const webhookRoutes = require('./connectors/webhook.routes');         
+const webhookRoutes = require('./connectors/webhook.routes');
+const productRoutes = require('./routes/product.routes');
+const errorMiddleware = require('./middleware/error.middleware');
+const { ensureTextIndex } = require('./services/product-api.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
@@ -21,6 +24,7 @@ const app = express();
 app.use('/webhooks', webhookRoutes);
 app.use(express.json());
 app.use('/scheduler', schedulerRoutes);
+app.use('/products', productRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {
@@ -228,6 +232,9 @@ async function initializeScheduler() {
 }
 
 initializeScheduler();
+ensureTextIndex();
+
+app.use(errorMiddleware);
 
 app.listen(port, () => {
 	logger.info({ message: 'Server started successfully', port });
