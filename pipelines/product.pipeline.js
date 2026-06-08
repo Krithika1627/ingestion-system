@@ -1,6 +1,3 @@
-/**
- * Shopify product pipeline: fetch raw data, transform, validate, and upsert.
- */
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const { randomUUID } = require('crypto');
@@ -42,12 +39,6 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const validate = ajv.compile(productSchema);
 
-/**
- * Compute availability status from inventory and in-stock flag.
- * @param {number|null|undefined} inventoryQty
- * @param {boolean} isInStock
- * @returns {string}
- */
 function getAvailability(inventoryQty, isInStock) {
   if (typeof inventoryQty !== 'number') {
     return isInStock ? 'in_stock' : 'out_of_stock';
@@ -56,12 +47,6 @@ function getAvailability(inventoryQty, isInStock) {
   return inventoryQty > 0 ? 'in_stock' : 'out_of_stock';
 }
 
-/**
- * Build an offer record from a product and variant.
- * @param {object} product
- * @param {object} variant
- * @returns {object}
- */
 function buildOfferFromVariant(product, variant) {
   return {
     sourceId: product?.sourceId || null,
@@ -78,12 +63,6 @@ function buildOfferFromVariant(product, variant) {
   };
 }
 
-/**
- * Derive Magento availability from stock quantity and threshold.
- * @param {number|null|undefined} qty
- * @param {number} threshold
- * @returns {string}
- */
 function deriveAvailability(qty, threshold = 10) {
   if (qty === null || qty === undefined) {
     return 'in_stock';
@@ -97,13 +76,6 @@ function deriveAvailability(qty, threshold = 10) {
   return 'in_stock';
 }
 
-/**
- * Derive WooCommerce availability from stock status and quantity.
- * @param {number|null|undefined} qty
- * @param {string} stockStatus
- * @param {number} threshold
- * @returns {string}
- */
 function deriveWooAvailability(qty, stockStatus, threshold = 10) {
   if (stockStatus === 'outofstock') {
     return 'out_of_stock';
@@ -141,12 +113,6 @@ function hasUnmatchedCategories(categoryIds, categoryIdSet, rawCategoryCount) {
   return normalized.some((id) => !categoryIdSet.has(id));
 }
 
-/**
- * Run Shopify product ingestion pipeline.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runShopifyProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_shopify_001';
   const startTime = Date.now();
@@ -431,12 +397,6 @@ async function runShopifyProductPipeline(storeId, since) {
   return summary;
 }
 
-/**
- * Run Magento product ingestion pipeline.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runMagentoProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_magento_001';
   const startTime = Date.now();
@@ -720,12 +680,6 @@ async function runMagentoProductPipeline(storeId, since) {
   return summary;
 }
 
-/**
- * Run WooCommerce product ingestion pipeline.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runWooProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_woo_001';
   const startTime = Date.now();
@@ -1009,12 +963,6 @@ async function runWooProductPipeline(storeId, since) {
   return summary;
 }
 
-/**
- * Run BigCommerce product ingestion pipeline.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products modified after this date
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runBigCommerceProductPipeline(storeId, since) {
   const pipelineStoreId = storeId || 'store_bigcommerce_001';
   const startTime = Date.now();

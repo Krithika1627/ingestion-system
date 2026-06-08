@@ -114,14 +114,6 @@ router.get('/jobs', async (req, res) => {
   }
 });
 
-// ──────────────────────────────────────────────
-// Dead-letter / failed-jobs endpoints
-// ──────────────────────────────────────────────
-
-/**
- * GET /scheduler/failed-jobs
- * Returns all failed jobs with status 'pending_review'.
- */
 router.get('/failed-jobs', async (req, res) => {
   try {
     await connectDB();
@@ -139,10 +131,6 @@ router.get('/failed-jobs', async (req, res) => {
   }
 });
 
-/**
- * PUT /scheduler/failed-jobs/:id/resolve
- * Marks a failed job as resolved.
- */
 router.put('/failed-jobs/:id/resolve', async (req, res) => {
   try {
     const { id } = req.params;
@@ -182,11 +170,6 @@ router.put('/failed-jobs/:id/resolve', async (req, res) => {
   }
 });
 
-/**
- * POST /scheduler/failed-jobs/:id/retry
- * Manually retries a dead-lettered job immediately using executeWithRetry.
- * Marks the failed job as resolved if the retry succeeds.
- */
 router.post('/failed-jobs/:id/retry', async (req, res) => {
   try {
     const { id } = req.params;

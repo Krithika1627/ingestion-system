@@ -1,6 +1,3 @@
-/**
- * WooCommerce connector with mock mode, pagination, retries, and rate-limit delays.
- */
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -14,20 +11,10 @@ const DEFAULT_RATE_LIMIT_DELAY = 500;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([429, 500, 502, 503]);
 
-/**
- * Sleep for a duration in milliseconds.
- * @param {number} ms
- * @returns {Promise<void>}
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve a store identifier from input.
- * @param {object|string} store
- * @returns {string}
- */
 function getStoreId(store) {
   if (typeof store === 'string') {
     return store;
@@ -35,21 +22,10 @@ function getStoreId(store) {
   return store?.id || store?.storeId || 'store_woo_001';
 }
 
-/**
- * Resolve sync configuration from input.
- * @param {object} store
- * @returns {object}
- */
 function getSyncConfig(store) {
   return store?.syncConfig || {};
 }
 
-/**
- * Build a WooCommerce API URL with auth query params.
- * @param {string} pathName
- * @param {object} extraParams
- * @returns {string}
- */
 function buildUrl(pathName, extraParams = {}) {
   const baseUrl = process.env.WOO_STORE_URL;
 
@@ -70,22 +46,12 @@ function buildUrl(pathName, extraParams = {}) {
   return url.toString();
 }
 
-/**
- * Load WooCommerce mock data from disk.
- * @returns {object}
- */
 function loadMockData() {
   const mockPath = path.join(__dirname, '..', 'mock-data', 'woocommerce-mock.json');
   const raw = fs.readFileSync(mockPath, 'utf-8');
   return JSON.parse(raw);
 }
 
-/**
- * Execute a request function with retry and backoff.
- * @param {Function} requestFn
- * @param {object} context
- * @returns {Promise<any>}
- */
 async function requestWithRetry(requestFn, context) {
   const retryAttempts = context?.retryAttempts || DEFAULT_RETRY_ATTEMPTS;
 
@@ -124,13 +90,6 @@ async function requestWithRetry(requestFn, context) {
   throw new Error('WooCommerce request failed after retries');
 }
 
-/**
- * Fetch all products from WooCommerce with pagination.
- * Supports incremental sync via optional since parameter.
- * @param {object|string} store
- * @param {Date|null} [since] - Only fetch products updated after this date
- * @returns {Promise<object[]>}
- */
 async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
@@ -255,11 +214,6 @@ async function fetchProducts(store, since) {
   return allItems;
 }
 
-/**
- * Fetch all categories from WooCommerce with pagination.
- * @param {object|string} store
- * @returns {Promise<object[]>}
- */
 async function fetchCategories(store) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);

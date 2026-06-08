@@ -1,14 +1,3 @@
-/**
- * Webhook routes for Shopify and WooCommerce real-time updates.
- *
- * IMPORTANT: All webhook routes use express.raw({ type: 'application/json' })
- * BEFORE JSON parsing because Shopify HMAC verification requires the raw
- * unparsed body. These routes MUST be registered BEFORE the global
- * express.json() middleware in index.js.
- *
- * All endpoints respond 200 immediately and process the webhook
- * asynchronously — platforms like Shopify retry if no 200 within 5 s.
- */
 const express = require('express');
 const logger = require('../services/logger.service');
 const {
@@ -20,20 +9,6 @@ const {
 
 const router = express.Router();
 
-/* ------------------------------------------------------------------ */
-/*  Shopify Webhooks                                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * POST /webhooks/shopify/:storeId
- *
- * Headers:
- *   X-Shopify-Topic       — e.g. 'products/create'
- *   X-Shopify-Hmac-Sha256 — HMAC signature for verification
- *
- * The raw body is captured via express.raw() for HMAC verification,
- * then parsed as JSON for processing.
- */
 router.post('/shopify/:storeId', express.raw({ type: 'application/json' }), (req, res) => {
         const storeId = req.params.storeId;
         const topic = req.headers['x-shopify-topic'];
@@ -79,17 +54,6 @@ router.post('/shopify/:storeId', express.raw({ type: 'application/json' }), (req
         }
 });
 
-/* ------------------------------------------------------------------ */
-/*  WooCommerce Webhooks                                               */
-/* ------------------------------------------------------------------ */
-
-/**
- * POST /webhooks/woocommerce/:storeId
- *
- * Headers:
- *   X-WC-Webhook-Topic     — e.g. 'product.created'
- *   X-WC-Webhook-Signature — HMAC signature for verification
- */
 router.post('/woocommerce/:storeId', express.raw({ type: 'application/json' }), (req, res) => {
         const storeId = req.params.storeId;
         const topic = req.headers['x-wc-webhook-topic'];
@@ -135,14 +99,6 @@ router.post('/woocommerce/:storeId', express.raw({ type: 'application/json' }), 
         }
 });
 
-/* ------------------------------------------------------------------ */
-/*  Health Check                                                       */
-/* ------------------------------------------------------------------ */
-
-/**
- * GET /webhooks/health
- * Returns service health status.
- */
 router.get('/health', (_req, res) => {
         res.json({
                 status: 'ok',

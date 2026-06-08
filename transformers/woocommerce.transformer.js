@@ -1,6 +1,3 @@
-/**
- * Transforms WooCommerce product and category payloads into canonical formats.
- */
 const { randomUUID } = require('crypto');
 
 function safeArray(value) {
@@ -15,11 +12,6 @@ function toNullableString(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/**
- * Strip HTML tags from a string.
- * @param {string} str
- * @returns {string|null}
- */
 function stripHtml(str) {
   if (typeof str !== 'string') {
     return null;
@@ -28,11 +20,6 @@ function stripHtml(str) {
   return cleaned.length > 0 ? cleaned : null;
 }
 
-/**
- * Extract brand from WooCommerce product data.
- * @param {object} product
- * @returns {string|null}
- */
 function extractBrand(product) {
   const brands = safeArray(product?.brands);
   if (brands.length > 0) {
@@ -70,12 +57,6 @@ function cleanTitle(value) {
     .trim();
 }
 
-/**
- * Transform WooCommerce product item into canonical product.
- * @param {object} item
- * @param {string} storeId
- * @returns {object}
- */
 function transformProduct(item, storeId) {
   const sourceItem = item || {};
   const categories = safeArray(sourceItem?.categories);
@@ -177,12 +158,6 @@ function transformProduct(item, storeId) {
   };
 }
 
-/**
- * Transform WooCommerce category node into canonical category.
- * @param {object} node
- * @param {string} storeId
- * @returns {object}
- */
 function transformCategory(node, storeId) {
   const sourceNode = node || {};
   const parentSourceId =

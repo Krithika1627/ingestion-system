@@ -1,6 +1,3 @@
-/**
- * Unicommerce connector for inventory snapshot fetch with mock fallback.
- */
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -17,20 +14,10 @@ const RETRY_STATUSES = new Set([429, 500, 502, 503]);
 let accessToken = null;
 let tokenExpiresAt = 0;
 
-/**
- * Sleep for a duration in milliseconds.
- * @param {number} ms
- * @returns {Promise<void>}
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve store identifier from input.
- * @param {object|string} store
- * @returns {string}
- */
 function getStoreId(store) {
   if (typeof store === 'string') {
     return store;
@@ -38,29 +25,16 @@ function getStoreId(store) {
   return store?.id || store?.storeId || 'store_unicommerce_001';
 }
 
-/**
- * Resolve sync configuration from input.
- * @param {object} store
- * @returns {object}
- */
 function getSyncConfig(store) {
   return store?.syncConfig || {};
 }
 
-/**
- * Load Unicommerce mock data from disk.
- * @returns {object[]}
- */
 function loadMockData() {
   const mockPath = path.join(__dirname, '..', 'mock-data', 'unicommerce-mock.json');
   const raw = fs.readFileSync(mockPath, 'utf-8');
   return JSON.parse(raw);
 }
 
-/**
- * Build Unicommerce base URL.
- * @returns {string}
- */
 function getBaseUrl() {
   const baseUrl = process.env.UNICOMMERCE_BASE_URL;
   if (!baseUrl) {
@@ -69,10 +43,6 @@ function getBaseUrl() {
   return baseUrl.replace(/\/$/, '');
 }
 
-/**
- * Authenticate against Unicommerce OAuth endpoint.
- * @returns {Promise<string>}
- */
 async function authenticate() {
   const baseUrl = getBaseUrl();
   const params = new URLSearchParams();
@@ -105,12 +75,6 @@ async function getAccessToken() {
   return authenticate();
 }
 
-/**
- * Execute request with retry and re-auth on 401.
- * @param {Function} requestFn
- * @param {object} context
- * @returns {Promise<any>}
- */
 async function requestWithRetry(requestFn, context) {
   const retryAttempts = context?.retryAttempts || DEFAULT_RETRY_ATTEMPTS;
 
@@ -153,14 +117,6 @@ async function requestWithRetry(requestFn, context) {
   throw new Error('Unicommerce request failed after retries');
 }
 
-/**
- * Fetch inventory snapshots from Unicommerce.
- * Supports incremental sync via optional since parameter (in-memory filter — no server-side support).
- * @param {object|string} store
- * @param {string} facilityCode
- * @param {Date|null} [since] - Only fetch items updated after this date (in-memory filter)
- * @returns {Promise<object[]>}
- */
 async function fetchInventorySnapshots(store, facilityCode, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);

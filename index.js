@@ -10,6 +10,8 @@ const { loadSchedules } = require('./services/scheduler.service');
 const schedulerRoutes = require('./connectors/scheduler.routes');
 const webhookRoutes = require('./connectors/webhook.routes');
 const productRoutes = require('./routes/product.routes');
+const storeRoutes = require('./routes/store.routes');
+const offerRoutes = require('./routes/offer.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 const { ensureTextIndex } = require('./services/product-api.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
@@ -25,6 +27,8 @@ app.use('/webhooks', webhookRoutes);
 app.use(express.json());
 app.use('/scheduler', schedulerRoutes);
 app.use('/products', productRoutes);
+app.use('/stores', storeRoutes);
+app.use('/offers', offerRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {

@@ -1,6 +1,3 @@
-/**
- * Master WooCommerce sync pipeline: categories, products, store sync update.
- */
 const logger = require('../services/logger.service');
 const { runWooCategoryPipeline } = require('./category.pipeline');
 const { runWooProductPipeline } = require('./product.pipeline');
@@ -11,11 +8,6 @@ const {
   updateProductCategoryIds
 } = require('../services/db.service');
 
-/**
- * Enrich WooCommerce products with canonical category UUIDs.
- * @param {string} storeId
- * @returns {Promise<object>}
- */
 async function enrichWooCommerceProductCategories(storeId) {
   const pipelineStoreId = storeId || 'store_woo_001';
   const startTime = Date.now();
@@ -100,12 +92,6 @@ async function enrichWooCommerceProductCategories(storeId) {
   return { processed, updated, missingCategories, duration };
 }
 
-/**
- * Run the full WooCommerce sync in the correct order.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{categorySummary: object, productSummary: object}>}
- */
 async function runWooFullSync(storeId = 'store_woo_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_woo_001';

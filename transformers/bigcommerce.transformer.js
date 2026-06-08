@@ -1,13 +1,5 @@
-/**
- * Transforms BigCommerce product and category payloads into canonical formats.
- */
 const { randomUUID } = require('crypto');
 
-/**
- * Strip HTML tags from a string.
- * @param {string} str
- * @returns {string|null}
- */
 function stripHtml(str) {
 	if (!str) {
 		return null;
@@ -16,12 +8,6 @@ function stripHtml(str) {
 	return result || null;
 }
 
-/**
- * Extract a custom field value by name.
- * @param {object[]} customFields
- * @param {string} name
- * @returns {string|null}
- */
 function extractCustomField(customFields, name) {
 	if (!Array.isArray(customFields) || customFields.length === 0) {
 		return null;
@@ -32,11 +18,6 @@ function extractCustomField(customFields, name) {
 	return field?.value || null;
 }
 
-/**
- * Derive canonical product status.
- * @param {object} product
- * @returns {string}
- */
 function deriveStatus(product) {
 	if (product?.availability === 'preorder') {
 		return 'preorder';
@@ -47,11 +28,6 @@ function deriveStatus(product) {
 	return 'active';
 }
 
-/**
- * Resolve stock quantity based on inventory tracking.
- * @param {object} product
- * @returns {number|null}
- */
 function resolveStockQty(product) {
 	if (product?.inventory_tracking === 'variant') {
 		return (product?.variants || []).reduce(
@@ -65,12 +41,6 @@ function resolveStockQty(product) {
 	return product?.inventory_level ?? null;
 }
 
-/**
- * Derive availability from inventory quantity.
- * @param {number|null|undefined} qty
- * @param {number} threshold
- * @returns {string}
- */
 function deriveAvailability(qty, threshold = 10) {
 	if (qty === null || qty === undefined) {
 		return 'in_stock';
@@ -94,15 +64,6 @@ function getMapValue(mapLike, key) {
 	return null;
 }
 
-/**
- * Transform BigCommerce product item into canonical product.
- * @param {object} item
- * @param {string} storeId
- * @param {object} [options]
- * @param {Map|object} [options.categoryIdMap]
- * @param {Map|object} [options.brandMap]
- * @returns {object}
- */
 function transformProduct(item, storeId, options = {}) {
 	const sourceItem = item || {};
 	const categoryIdMap = options?.categoryIdMap;
@@ -286,12 +247,6 @@ function transformProduct(item, storeId, options = {}) {
 	};
 }
 
-/**
- * Transform BigCommerce category node into canonical category.
- * @param {object} node
- * @param {string} storeId
- * @returns {object}
- */
 function transformCategory(node, storeId) {
 	const sourceNode = node || {};
 	const slug = typeof sourceNode?.url === 'string'

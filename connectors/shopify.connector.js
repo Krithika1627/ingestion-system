@@ -1,7 +1,3 @@
-/**
- * Shopify GraphQL connector for fetching products and collections with pagination,
- * rate limit handling, and retry logic.
- */
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
@@ -243,13 +239,6 @@ async function requestGraphQL(payload, context) {
   throw new Error('Shopify GraphQL request failed after retries');
 }
 
-/**
- * Fetch all products from Shopify with cursor-based pagination.
- * Supports incremental sync via optional since parameter.
- * @param {string} storeId
- * @param {Date|null} [since] - Only fetch products updated after this date
- * @returns {Promise<object[]>}
- */
 async function fetchProducts(storeId, since) {
   const startTime = Date.now();
   const context = { storeId };
@@ -316,11 +305,6 @@ async function fetchProducts(storeId, since) {
   return products;
 }
 
-/**
- * Fetch all collections from Shopify with cursor-based pagination.
- * @param {string} storeId
- * @returns {Promise<object[]>}
- */
 async function fetchCollections(storeId) {
   const context = { storeId };
   let hasNextPage = true;
@@ -372,12 +356,6 @@ async function fetchCollections(storeId) {
   return collections;
 }
 
-/**
- * Fetch product GIDs for a Shopify collection with cursor-based pagination.
- * @param {string} storeId
- * @param {string} collectionSourceId
- * @returns {Promise<string[]>}
- */
 async function fetchCollectionProducts(storeId, collectionSourceId) {
   const context = { storeId, collectionSourceId };
   let hasNextPage = true;

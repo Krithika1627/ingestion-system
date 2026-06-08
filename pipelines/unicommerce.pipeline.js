@@ -1,6 +1,3 @@
-/**
- * Unicommerce inventory sync pipeline.
- */
 const logger = require('../services/logger.service');
 const { fetchInventorySnapshots } = require('../connectors/unicommerce.connector');
 const { transformInventorySnapshot } = require('../transformers/unicommerce.transformer');
@@ -10,13 +7,6 @@ const {
   getStoreById
 } = require('../services/db.service');
 
-/**
- * Run Unicommerce inventory sync.
- * @param {string} storeId
- * @param {string} facilityCode
- * @param {Date|null} [since] - Optional: only fetch items updated after this date (in-memory filter)
- * @returns {Promise<{total:number, updated:number, skipped:number, failed:number, duration:number}>}
- */
 async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', facilityCode, since) {
   const pipelineStoreId = storeId || 'store_unicommerce_001';
   const startTime = Date.now();

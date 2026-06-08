@@ -1,30 +1,11 @@
-/**
- * Retry service — provides exponential backoff retry logic for scheduler sync jobs
- * and a dead-letter queue that persists permanently-failed jobs to MongoDB.
- */
 const logger = require('./logger.service');
 const { connectDB } = require('./db.service');
 const { FailedJob } = require('../models/failed_job.model');
 
-/**
- * Sleep for a given number of milliseconds.
- * @param {number} ms
- * @returns {Promise<void>}
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Write a permanently-failed job to the dead-letter queue (failed_jobs collection).
- * Logs a WARN-level alert that in production would trigger PagerDuty/Slack.
- *
- * @param {object} config - Sync config { storeId, platform, cronExpression }
- * @param {Error} error - The final error from attempt 3
- * @param {number} attemptNumber - Which attempt failed (3)
- * @param {object} syncWindow - { isFullSync, since }
- * @returns {Promise<object>} The saved FailedJob document
- */
 async function writeToDeadLetterQueue(config, error, attemptNumber, syncWindow) {
   await connectDB();
 
@@ -60,19 +41,6 @@ async function writeToDeadLetterQueue(config, error, attemptNumber, syncWindow) 
   return saved;
 }
 
-/**
- * Execute a sync function with retry logic and exponential backoff.
- *
- * Retry schedule:
- *   Attempt 1 → fail → wait 1 minute → Attempt 2
- *   Attempt 2 → fail → wait 5 minutes → Attempt 3
- *   Attempt 3 → fail → write to dead-letter queue
- *
- * @param {object} config - Sync config { storeId, platform, cronExpression }
- * @param {function} syncFn - Async function (storeId, syncWindow) => Promise<any>
- * @param {object} syncWindow - { isFullSync: boolean, since: Date|null }
- * @returns {Promise<{ success: boolean, attempts: number }>}
- */
 async function executeWithRetry(config, syncFn, syncWindow) {
   const MAX_ATTEMPTS = 3;
   const DELAYS = [0, 60000, 300000]; // attempt 1: no wait, attempt 2: 1min, attempt 3: 5min

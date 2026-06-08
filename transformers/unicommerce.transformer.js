@@ -23,13 +23,6 @@ function toNumber(value) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-/**
- * Transform an inventory snapshot into an offer inventory patch.
- * @param {object} snapshot
- * @param {string} storeId
- * @param {number} availabilityThreshold
- * @returns {object}
- */
 function transformInventorySnapshot(snapshot, storeId, availabilityThreshold) {
   const sourceSnapshot = snapshot || {};
   const inventory = toNumber(sourceSnapshot?.inventory);

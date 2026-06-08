@@ -1,6 +1,3 @@
-/**
- * Transforms a single Shopify product node into the canonical product format.
- */
 const { randomUUID } = require('crypto');
 
 function safeArray(value) {
@@ -50,12 +47,6 @@ function normalizeStatus(status) {
 	}
 }
 
-/**
- * Transform Shopify product node into canonical product.
- * @param {object} node
- * @param {string} storeId
- * @returns {object}
- */
 function transformProduct(node, storeId) {
 	const sourceNode = node || {};
 	const variantsEdges = safeArray(sourceNode?.variants?.edges);
@@ -129,12 +120,6 @@ function transformProduct(node, storeId) {
 	};
 }
 
-/**
- * Transform Shopify collection node into canonical category.
- * @param {object} node
- * @param {string} storeId
- * @returns {object}
- */
 function transformCollection(node, storeId) {
 	const sourceNode = node || {};
 	const imageUrl = toNullableString(sourceNode?.image?.url);

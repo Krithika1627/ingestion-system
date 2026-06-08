@@ -1,6 +1,3 @@
-/**
- * BigCommerce connector with mock mode, pagination, retries, and brand cache.
- */
 const axios = require('axios');
 const logger = require('../services/logger.service');
 
@@ -12,24 +9,13 @@ const DEFAULT_RATE_LIMIT_DELAY = 500;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 const RETRY_STATUSES = new Set([500, 502, 503]);
 
-// Brand cache populated per sync.
 let brandMap = new Map();
 let brandsLoaded = false;
 
-/**
- * Sleep for a duration in milliseconds.
- * @param {number} ms
- * @returns {Promise<void>}
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve a store identifier from input.
- * @param {object|string} store
- * @returns {string}
- */
 function getStoreId(store) {
   if (typeof store === 'string') {
     return store;
@@ -37,19 +23,10 @@ function getStoreId(store) {
   return store?.id || store?.storeId || 'store_bigcommerce_001';
 }
 
-/**
- * Resolve sync configuration from input.
- * @param {object} store
- * @returns {object}
- */
 function getSyncConfig(store) {
   return store?.syncConfig || {};
 }
 
-/**
- * Build BigCommerce authentication headers.
- * @returns {object}
- */
 function buildHeaders() {
   const token = process.env.BIGCOMMERCE_ACCESS_TOKEN;
   if (!token) {
@@ -62,11 +39,6 @@ function buildHeaders() {
   };
 }
 
-/**
- * Build BigCommerce v3 API URL.
- * @param {string} pathName
- * @returns {string}
- */
 function buildV3Url(pathName) {
   const storeHash = process.env.BIGCOMMERCE_STORE_HASH;
   if (!storeHash) {
@@ -75,11 +47,6 @@ function buildV3Url(pathName) {
   return `https://api.bigcommerce.com/stores/${storeHash}/v3${pathName}`;
 }
 
-/**
- * Build BigCommerce v2 API URL.
- * @param {string} pathName
- * @returns {string}
- */
 function buildV2Url(pathName) {
   const storeHash = process.env.BIGCOMMERCE_STORE_HASH;
   if (!storeHash) {
@@ -88,12 +55,6 @@ function buildV2Url(pathName) {
   return `https://api.bigcommerce.com/stores/${storeHash}/v2${pathName}`;
 }
 
-/**
- * Execute a request function with retry and rate-limit handling.
- * @param {Function} requestFn
- * @param {object} context
- * @returns {Promise<any>}
- */
 async function requestWithRetry(requestFn, context) {
   const retryAttempts = context?.retryAttempts || DEFAULT_RETRY_ATTEMPTS;
 
@@ -161,10 +122,6 @@ async function requestWithRetry(requestFn, context) {
   throw new Error('BigCommerce request failed after retries');
 }
 
-/**
- * Load all brands into the module-level cache.
- * @returns {Promise<void>}
- */
 async function loadBrands() {
   if (brandsLoaded) {
     return;
@@ -213,13 +170,6 @@ async function loadBrands() {
   });
 }
 
-/**
- * Fetch all products from BigCommerce with pagination.
- * Supports incremental sync via optional since parameter.
- * @param {object|string} store
- * @param {Date|null} [since] - Only fetch products modified after this date
- * @returns {Promise<{products: object[], brandMap: Map}>}
- */
 async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
@@ -353,11 +303,6 @@ async function fetchProducts(store, since) {
   return { products: allProducts, brandMap: new Map(brandMap) };
 }
 
-/**
- * Fetch all categories from BigCommerce with pagination.
- * @param {object|string} store
- * @returns {Promise<object[]>}
- */
 async function fetchCategories(store) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);

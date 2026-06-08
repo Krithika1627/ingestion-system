@@ -1,17 +1,8 @@
-/**
- * BigCommerce master sync pipeline.
- */
 const logger = require('../services/logger.service');
 const { runBigCommerceCategoryPipeline } = require('./category.pipeline');
 const { runBigCommerceProductPipeline } = require('./product.pipeline');
 const { updateStoreLastSynced } = require('../services/db.service');
 
-/**
- * Run BigCommerce full sync (categories then products).
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products modified after this date
- * @returns {Promise<{categorySummary: object, productSummary: object}>}
- */
 async function runBigCommerceFullSync(storeId = 'store_bigcommerce_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_bigcommerce_001';

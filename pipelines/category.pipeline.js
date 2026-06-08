@@ -1,6 +1,3 @@
-/**
- * Shopify category pipeline: fetch collections, transform, validate, and upsert.
- */
 const Ajv = require('ajv');
 const addFormats = require('ajv-formats');
 const logger = require('../services/logger.service');
@@ -19,11 +16,6 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const validate = ajv.compile(categorySchema);
 
-/**
- * Run Shopify category ingestion pipeline.
- * @param {string} storeId
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runShopifyCategoryPipeline(storeId) {
   const pipelineStoreId = storeId || 'store_shopify_001';
   const startTime = Date.now();
@@ -89,14 +81,6 @@ async function runShopifyCategoryPipeline(storeId) {
   return summary;
 }
 
-/**
- * Recursively flatten Magento category tree into canonical categories.
- * @param {object} node
- * @param {string|null} parentCanonicalId
- * @param {string} storeId
- * @param {object[]} result
- * @returns {object[]}
- */
 function flattenCategoryTree(node, parentCanonicalId, store, result = []){
 
   if (!node) {
@@ -132,11 +116,6 @@ function flattenCategoryTree(node, parentCanonicalId, store, result = []){
   return result;
 }
 
-/**
- * Run Magento category ingestion pipeline.
- * @param {string} storeId
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runMagentoCategoryPipeline(storeId) {
   const pipelineStoreId = storeId || 'store_magento_001';
   const startTime = Date.now();
@@ -206,11 +185,6 @@ async function runMagentoCategoryPipeline(storeId) {
   return summary;
 }
 
-/**
- * Run WooCommerce category ingestion pipeline.
- * @param {string} storeId
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runWooCategoryPipeline(storeId) {
   const pipelineStoreId = storeId || 'store_woo_001';
   const startTime = Date.now();
@@ -292,11 +266,6 @@ async function runWooCategoryPipeline(storeId) {
   return summary;
 }
 
-/**
- * Run BigCommerce category ingestion pipeline.
- * @param {string} storeId
- * @returns {Promise<{total:number, success:number, failed:number, duration:number}>}
- */
 async function runBigCommerceCategoryPipeline(storeId) {
   const pipelineStoreId = storeId || 'store_bigcommerce_001';
   const startTime = Date.now();

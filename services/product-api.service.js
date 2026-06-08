@@ -1,33 +1,12 @@
-/**
- * Product API service — data access layer for the canonical product API.
- *
- * Keeps all DB queries out of route handlers.
- * Exposes paginated listing, single-product lookup, source resolution,
- * and a consistent response builder.
- */
 const mongoose = require('mongoose');
 const logger = require('./logger.service');
 const { connectDB, getStoreById } = require('./db.service');
 
-/* ------------------------------------------------------------------ */
-/*  Internal helpers                                                   */
-/* ------------------------------------------------------------------ */
-
-/**
- * Escape special regex characters in a string.
- * @param {string} str
- * @returns {string}
- */
 function escapeRegex(str) {
   if (typeof str !== 'string') return '';
   return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Build the MongoDB sort object from the API sort token.
- * @param {string} sort
- * @returns {object}
- */
 function buildSortObject(sort) {
   switch (sort) {
     case 'price_asc':
@@ -42,18 +21,6 @@ function buildSortObject(sort) {
   }
 }
 
-/**
- * Build the MongoDB filter object from the incoming API filters.
- *
- * Supports:
- *  - category, brand  → direct field match
- *  - platform         → match against sources array (string or object elements)
- *  - storeId          → match against sources[].storeId
- *  - availability     → joined check via offers collection (handled in getProducts)
- *
- * @param {object} filters
- * @returns {Promise<{filter:object, availabilityFilter:string|null}>}
- */
 async function buildFilter(filters) {
   const filter = {};
 
@@ -66,8 +33,6 @@ async function buildFilter(filters) {
     filter.brand = { $regex: new RegExp(`^${escapeRegex(filters.brand)}$`, 'i') };
   }
 
-  /* Platform filter — sources array can be strings or { source, sourceId, storeId } objects.
-   * Use $or so either format matches. */
   if (filters.platform) {
     filter.$or = [
       { sources: filters.platform },
@@ -75,11 +40,6 @@ async function buildFilter(filters) {
     ];
   }
 
-  /*
-   * StoreId filter.
-   * If platform filter already set an $or, keep storeId as a top-level
-   * AND condition (not inside $or) so both constraints apply together.
-   */
   if (filters.storeId) {
     filter['sources.storeId'] = filters.storeId;
   }
@@ -87,11 +47,6 @@ async function buildFilter(filters) {
   return { filter, availabilityFilter: filters.availability || null };
 }
 
-/**
- * Get an array of canonicalProductIds filtered by offer availability.
- * @param {string} availabilityFilter — 'inStock' | 'outOfStock'
- * @returns {Promise<string[]>}
- */
 async function getCanonicalIdsByAvailability(availabilityFilter) {
   if (!availabilityFilter) return null;
 
@@ -108,24 +63,9 @@ async function getCanonicalIdsByAvailability(availabilityFilter) {
   const results = await offersCollection.aggregate(pipeline).toArray();
   const ids = results.map((r) => r._id).filter(Boolean);
 
-  /* Force no results when no matching IDs found */
   return ids.length > 0 ? ids : [null];
 }
 
-/* ------------------------------------------------------------------ */
-/*  Public API                                                         */
-/* ------------------------------------------------------------------ */
-
-/**
- * Paginated list of canonical products with filtering and sorting.
- *
- * @param {object} options
- * @param {number}  [options.page=1]
- * @param {number}  [options.limit=20]
- * @param {string}  [options.sort='updated_at']
- * @param {object}  [options.filters={}]
- * @returns {Promise<{data:object[], total:number, page:number, limit:number, hasMore:boolean}>}
- */
 async function getProducts({ page = 1, limit = 20, sort = 'updated_at', filters = {} } = {}) {
   await connectDB();
 
@@ -133,7 +73,6 @@ async function getProducts({ page = 1, limit = 20, sort = 'updated_at', filters 
   const sortObj = buildSortObject(sort);
   const { filter, availabilityFilter } = await buildFilter(filters);
 
-  /* Handle availability filter via offers join */
   if (availabilityFilter) {
     const canonicalIds = await getCanonicalIdsByAvailability(availabilityFilter);
     filter.canonicalId = { $in: canonicalIds };
@@ -160,12 +99,6 @@ async function getProducts({ page = 1, limit = 20, sort = 'updated_at', filters 
   };
 }
 
-/**
- * Get a single canonical product by its canonicalProductId (cprod_xxx).
- *
- * @param {string} canonicalProductId
- * @returns {Promise<object|null>}
- */
 async function getProductById(canonicalProductId) {
   await connectDB();
 
@@ -177,15 +110,6 @@ async function getProductById(canonicalProductId) {
   return buildProductResponse(doc);
 }
 
-/**
- * Resolve the raw source records for a canonical product.
- *
- * Looks up the canonical document, then for each source finds the
- * raw product record from the `products` collection.
- *
- * @param {string} canonicalProductId
- * @returns {Promise<{canonicalProductId:string, sourceCount:number, sources:object[]}|null>}
- */
 async function getProductSources(canonicalProductId) {
   await connectDB();
 
@@ -198,7 +122,6 @@ async function getProductSources(canonicalProductId) {
 
   const productsCollection = mongoose.connection.collection('products');
 
-  /* Evaluate sources array (could be strings or objects) */
   const rawSources = Array.isArray(canonicalDoc.sources) ? canonicalDoc.sources : [];
 
   const resolvedSources = [];
@@ -207,18 +130,15 @@ async function getProductSources(canonicalProductId) {
     let storeId, platform, sourceId;
 
     if (typeof entry === 'string') {
-      /* Legacy format: sources is just ['shopify', 'magento'] */
       platform = entry;
       storeId = null;
       sourceId = null;
     } else if (typeof entry === 'object' && entry !== null) {
-      /* Enriched format: { source, sourceId, storeId } */
       platform = entry.source || entry.platform || null;
       storeId = entry.storeId || null;
       sourceId = entry.sourceId || null;
     }
 
-    /* Build query for the products collection */
     const productQuery = { canonicalProductId };
     if (storeId) {
       productQuery.storeId = storeId;
@@ -235,7 +155,6 @@ async function getProductSources(canonicalProductId) {
       }
     });
 
-    /* Resolve store name */
     let storeName = null;
     if (storeId) {
       const store = await getStoreById(storeId);
@@ -260,17 +179,6 @@ async function getProductSources(canonicalProductId) {
   };
 }
 
-/**
- * Build a consistent API response object from a canonical product document.
- *
- * - Strips __v
- * - Keeps _id as a string
- * - Also exposes canonicalProductId (aliases from canonicalId)
- * - Formats priceRange: null if both min and max are null
- *
- * @param {object} doc — raw MongoDB document from canonical_products
- * @returns {object|null}
- */
 function buildProductResponse(doc) {
   if (!doc) return null;
 
@@ -280,11 +188,9 @@ function buildProductResponse(doc) {
 
   const response = {
     ...rest,
-    _id: _id != null ? String(_id) : null,
     canonicalProductId: canonicalId || null
   };
 
-  /* Tidy priceRange */
   if (response.priceRange) {
     const { min, max, ...priceRest } = response.priceRange;
     if (min === null && max === null) {
@@ -297,14 +203,6 @@ function buildProductResponse(doc) {
   return response;
 }
 
-/**
- * Ensure a MongoDB text index exists on canonical_products.
- * Safe to call on every startup — it's a no-op if the index already exists.
- *
- * Indexed fields: title, brand, description (for future text search).
- *
- * @returns {Promise<void>}
- */
 async function ensureTextIndex() {
   try {
     await connectDB();

@@ -1,12 +1,3 @@
-/**
- * Webhook processing service for Shopify and WooCommerce real-time updates.
- *
- * Responsibilities:
- *  - Verify Shopify HMAC signatures (timing-safe)
- *  - Verify WooCommerce webhook signatures
- *  - Route webhook topics to the correct transformer + pipeline
- *  - Log every webhook received with platform, topic, storeId, outcome
- */
 const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Ajv = require('ajv');
@@ -39,16 +30,6 @@ const ajv = new Ajv({ strict: false });
 addFormats(ajv);
 const validate = ajv.compile(productSchema);
 
-/* ------------------------------------------------------------------ */
-/*  Signature Verification                                             */
-/* ------------------------------------------------------------------ */
-
-/**
- * Verify Shopify HMAC-SHA256 signature using timing-safe comparison.
- * @param {Buffer|string} rawBody  — the raw, unparsed request body
- * @param {string}         hmacHeader — value of X-Shopify-Hmac-Sha256
- * @returns {boolean}
- */
 function verifyShopifyHmac(rawBody, hmacHeader) {
         if (!rawBody || !hmacHeader) {
                 logger.warn({
@@ -91,12 +72,6 @@ function verifyShopifyHmac(rawBody, hmacHeader) {
         }
 }
 
-/**
- * Verify WooCommerce webhook signature (HMAC-SHA256, base64-encoded).
- * @param {Buffer|string} rawBody        — the raw, unparsed request body
- * @param {string}         signatureHeader — value of X-WC-Webhook-Signature
- * @returns {boolean}
- */
 function verifyWooCommerceSignature(rawBody, signatureHeader) {
         if (!rawBody || !signatureHeader) {
                 logger.warn({
@@ -139,17 +114,6 @@ function verifyWooCommerceSignature(rawBody, signatureHeader) {
         }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Shopify REST → GraphQL Adapter                                     */
-/* ------------------------------------------------------------------ */
-
-/**
- * Convert a Shopify REST webhook payload into the GraphQL-like structure
- * expected by transformProduct in shopify.transformer.
- *
- * @param {object} restPayload — Shopify REST API product object
- * @returns {object} GraphQL-like product node
- */
 function adaptShopifyRestToGraphql(restPayload) {
         const src = restPayload || {};
 
@@ -208,16 +172,6 @@ function adaptShopifyRestToGraphql(restPayload) {
         };
 }
 
-/* ------------------------------------------------------------------ */
-/*  Single-Product Upsert (mirrors product.pipeline per-item logic)    */
-/* ------------------------------------------------------------------ */
-
-/**
- * Compute availability from inventory quantity and in-stock flag.
- * @param {number|null|undefined} inventoryQty
- * @param {boolean} isInStock
- * @returns {string}
- */
 function getAvailability(inventoryQty, isInStock) {
         if (typeof inventoryQty !== 'number') {
                 return isInStock ? 'in_stock' : 'out_of_stock';
@@ -225,12 +179,6 @@ function getAvailability(inventoryQty, isInStock) {
         return inventoryQty > 0 ? 'in_stock' : 'out_of_stock';
 }
 
-/**
- * Build an offer record from a product and variant.
- * @param {object} product
- * @param {object} variant
- * @returns {object}
- */
 function buildOfferFromVariant(product, variant) {
         return {
                 id: randomUUID(),
@@ -249,14 +197,6 @@ function buildOfferFromVariant(product, variant) {
         };
 }
 
-/**
- * Process a single Shopify product through transform → validate → upsert.
- * Mirrors the per-product loop in runShopifyProductPipeline.
- *
- * @param {object} rawProduct — Shopify REST product payload
- * @param {string} storeId
- * @returns {Promise<{success:boolean, sourceId:string|null, error?:string}>}
- */
 async function processSingleShopifyProduct(rawProduct, storeId) {
         const pipelineStoreId = storeId || 'store_shopify_001';
 
@@ -349,14 +289,6 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
         }
 }
 
-/**
- * Process a single WooCommerce product through transform → validate → upsert.
- * WooCommerce webhook payloads already match the REST format the transformer expects.
- *
- * @param {object} rawProduct — WooCommerce REST product payload
- * @param {string} storeId
- * @returns {Promise<{success:boolean, sourceId:string|null, error?:string}>}
- */
 async function processSingleWooProduct(rawProduct, storeId) {
         const pipelineStoreId = storeId || 'store_woo_001';
 
@@ -473,18 +405,6 @@ async function processSingleWooProduct(rawProduct, storeId) {
         }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Inventory & Deactivation Handlers                                  */
-/* ------------------------------------------------------------------ */
-
-/**
- * Handle Shopify inventory_levels/update webhook.
- * Finds the variant by inventory_item_id and updates offer availability.
- *
- * @param {object} payload — { inventory_item_id, available, location_id, ... }
- * @param {string} storeId
- * @returns {Promise<{success:boolean, error?:string}>}
- */
 async function handleInventoryLevelUpdate(payload, storeId) {
         const pipelineStoreId = storeId || 'store_shopify_001';
         const inventoryItemId = payload?.inventory_item_id;
@@ -583,14 +503,6 @@ async function handleInventoryLevelUpdate(payload, storeId) {
         }
 }
 
-/**
- * Mark a product as inactive in MongoDB (soft delete — don't actually remove).
- *
- * @param {string} platform — 'shopify' | 'woocommerce'
- * @param {string} sourceId — platform-specific product ID
- * @param {string} storeId
- * @returns {Promise<{success:boolean, error?:string}>}
- */
 async function markProductInactive(platform, sourceId, storeId) {
         if (!platform || !sourceId || !storeId) {
                 logger.warn({
@@ -664,18 +576,6 @@ async function markProductInactive(platform, sourceId, storeId) {
         }
 }
 
-/* ------------------------------------------------------------------ */
-/*  Main Webhook Routing Functions                                     */
-/* ------------------------------------------------------------------ */
-
-/**
- * Process a Shopify webhook by routing to the correct handler based on topic.
- *
- * @param {string} topic   — e.g. 'products/create', 'products/update', 'products/delete', 'inventory_levels/update'
- * @param {object} payload — parsed JSON body
- * @param {string} storeId
- * @returns {Promise<{success:boolean, topic:string, error?:string}>}
- */
 async function processShopifyWebhook(topic, payload, storeId) {
         const pipelineStoreId = storeId || 'store_shopify_001';
 
@@ -744,14 +644,6 @@ async function processShopifyWebhook(topic, payload, storeId) {
         return { ...result, topic };
 }
 
-/**
- * Process a WooCommerce webhook by routing to the correct handler based on topic.
- *
- * @param {string} topic   — e.g. 'product.created', 'product.updated', 'product.deleted'
- * @param {object} payload — parsed JSON body
- * @param {string} storeId
- * @returns {Promise<{success:boolean, topic:string, error?:string}>}
- */
 async function processWooCommerceWebhook(topic, payload, storeId) {
         const pipelineStoreId = storeId || 'store_woo_001';
 

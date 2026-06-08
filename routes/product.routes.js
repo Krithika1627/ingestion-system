@@ -1,9 +1,3 @@
-/**
- * Product API routes.
- *
- * All routes pull from canonical_products only, never from raw products directly.
- * Always return the consistent envelope: { success, data, meta? }
- */
 const express = require('express');
 const logger = require('../services/logger.service');
 const productApi = require('../services/product-api.service');
@@ -11,10 +5,6 @@ const { validatePagination, validateProductId } = require('../middleware/validat
 
 const router = express.Router();
 
-/* ------------------------------------------------------------------ */
-/*  GET /products                                                      */
-/*  Paginated list of canonical products with filtering and sorting    */
-/* ------------------------------------------------------------------ */
 router.get('/', validatePagination, async (req, res, next) => {
   const startTime = Date.now();
   const validated = req.validated;
@@ -60,10 +50,6 @@ router.get('/', validatePagination, async (req, res, next) => {
   }
 });
 
-/* ------------------------------------------------------------------ */
-/*  GET /products/:id                                                  */
-/*  Single canonical product by canonicalProductId                     */
-/* ------------------------------------------------------------------ */
 router.get('/:id', validateProductId, async (req, res, next) => {
   const startTime = Date.now();
   const { id } = req.params;
@@ -99,10 +85,6 @@ router.get('/:id', validateProductId, async (req, res, next) => {
   }
 });
 
-/* ------------------------------------------------------------------ */
-/*  GET /products/:id/sources                                          */
-/*  Source records for a canonical product                             */
-/* ------------------------------------------------------------------ */
 router.get('/:id/sources', validateProductId, async (req, res, next) => {
   const startTime = Date.now();
   const { id } = req.params;

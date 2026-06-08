@@ -1,6 +1,3 @@
-/**
- * Magento connector with mock mode, pagination, retries, and rate-limit delays.
- */
 const fs = require('fs');
 const path = require('path');
 const axios = require('axios');
@@ -13,20 +10,10 @@ const DEFAULT_PAGE_SIZE = 20;
 const DEFAULT_RATE_LIMIT_DELAY = 1000;
 const DEFAULT_RETRY_ATTEMPTS = 3;
 
-/**
- * Sleep for a duration in milliseconds.
- * @param {number} ms
- * @returns {Promise<void>}
- */
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/**
- * Resolve a store identifier from input.
- * @param {object|string} store
- * @returns {string}
- */
 function getStoreId(store) {
   if (typeof store === 'string') {
     return store;
@@ -34,19 +21,10 @@ function getStoreId(store) {
   return store?.id || store?.storeId || 'store_magento_001';
 }
 
-/**
- * Resolve sync configuration from input.
- * @param {object} store
- * @returns {object}
- */
 function getSyncConfig(store) {
   return store?.syncConfig || {};
 }
 
-/**
- * Build the Magento REST API base URL.
- * @returns {string}
- */
 function getBaseUrl() {
   const storeUrl = process.env.MAGENTO_STORE_URL;
   if (!storeUrl) {
@@ -55,10 +33,6 @@ function getBaseUrl() {
   return `${storeUrl.replace(/\/$/, '')}/rest/V1`;
 }
 
-/**
- * Build Magento authentication headers.
- * @returns {object}
- */
 function getHeaders() {
   const token = process.env.MAGENTO_ACCESS_TOKEN;
   if (!token) {
@@ -70,22 +44,12 @@ function getHeaders() {
   };
 }
 
-/**
- * Load Magento mock data from disk.
- * @returns {object}
- */
 function loadMockData() {
   const mockPath = path.join(__dirname, '..', 'mock-data', 'magento-mock.json');
   const raw = fs.readFileSync(mockPath, 'utf-8');
   return JSON.parse(raw);
 }
 
-/**
- * Execute a request function with retry and backoff.
- * @param {Function} requestFn
- * @param {object} context
- * @returns {Promise<any>}
- */
 async function requestWithRetry(requestFn, context) {
   const retryAttempts = context?.retryAttempts || DEFAULT_RETRY_ATTEMPTS;
 
@@ -120,13 +84,6 @@ async function requestWithRetry(requestFn, context) {
   throw new Error('Magento request failed after retries');
 }
 
-/**
- * Fetch all products from Magento with pagination.
- * Supports incremental sync via optional since parameter.
- * @param {object|string} store
- * @param {Date|null} [since] - Only fetch products updated after this date
- * @returns {Promise<object[]>}
- */
 async function fetchProducts(store, since) {
   const storeId = getStoreId(store);
   const syncConfig = getSyncConfig(store);
@@ -252,11 +209,6 @@ async function fetchProducts(store, since) {
   return allItems;
 }
 
-/**
- * Fetch full Magento category tree.
- * @param {object|string} store
- * @returns {Promise<object>}
- */
 async function fetchCategories(store) {
   const storeId = getStoreId(store);
   const mode = USE_MOCK ? 'mock' : 'real';

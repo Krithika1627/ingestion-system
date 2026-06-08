@@ -1,6 +1,3 @@
-/**
- * Master Magento sync pipeline: categories, products, store sync update.
- */
 const logger = require('../services/logger.service');
 const { runMagentoCategoryPipeline } = require('./category.pipeline');
 const { runMagentoProductPipeline } = require('./product.pipeline');
@@ -11,11 +8,6 @@ const {
   addCategoryIdToProduct
 } = require('../services/db.service');
 
-/**
- * Enrich Magento products with categoryIds based on category_links.
- * @param {string} storeId
- * @returns {Promise<void>}
- */
 async function enrichMagentoProductCategoryIds(storeId) {
   const pipelineStoreId = storeId || 'store_magento_001';
   logger.info({
@@ -118,12 +110,6 @@ async function enrichMagentoProductCategoryIds(storeId) {
   });
 }
 
-/**
- * Run the full Magento sync in the correct order.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{categorySummary: object, productSummary: object}>}
- */
 async function runMagentoFullSync(storeId = 'store_magento_001', since) {
   const start = Date.now();
   const pipelineStoreId = storeId || 'store_magento_001';

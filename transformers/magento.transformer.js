@@ -1,6 +1,3 @@
-/**
- * Transforms Magento product and category payloads into canonical formats.
- */
 const { randomUUID } = require('crypto');
 
 const ATTRIBUTE_SKIP_LIST = new Set([
@@ -13,20 +10,10 @@ const ATTRIBUTE_SKIP_LIST = new Set([
   'thumbnail'
 ]);
 
-/**
- * Ensure the value is an array.
- * @param {any} value
- * @returns {Array}
- */
 function safeArray(value) {
   return Array.isArray(value) ? value : [];
 }
 
-/**
- * Convert a string to null when empty.
- * @param {any} value
- * @returns {string|null}
- */
 function toNullableString(value) {
   if (typeof value !== 'string') {
     return null;
@@ -35,11 +22,6 @@ function toNullableString(value) {
   return trimmed.length > 0 ? trimmed : null;
 }
 
-/**
- * Clean title string by stripping HTML and trademark symbols.
- * @param {any} value
- * @returns {string|null}
- */
 function cleanTitle(value) {
   if (typeof value !== 'string') {
     return null;
@@ -52,11 +34,6 @@ function cleanTitle(value) {
     .trim();
 }
 
-/**
- * Normalize a date-time string to ISO 8601, or null if invalid.
- * @param {any} value
- * @returns {string|null}
- */
 function normalizeDateTime(value) {
   if (typeof value !== 'string') {
     return null;
@@ -68,12 +45,6 @@ function normalizeDateTime(value) {
   return new Date(parsed).toISOString();
 }
 
-/**
- * Extract a custom attribute value from Magento custom_attributes array.
- * @param {Array} customAttributes
- * @param {string} code
- * @returns {string|null}
- */
 function extractCustomAttribute(customAttributes, code) {
   const attributes = safeArray(customAttributes);
   const match = attributes.find((attr) => attr?.attribute_code === code);
@@ -83,14 +54,6 @@ function extractCustomAttribute(customAttributes, code) {
   return toNullableString(match?.value);
 }
 
-/**
- * Transform Magento product item into canonical product.
- * @param {object} item
- * @param {string} storeId
- * @param {string} store
- * @param {string} storeBaseUrl
- * @returns {object}
- */
 function transformProduct(item, store, storeBaseUrl) {
   const sourceItem = item || {};
   const customAttributes = safeArray(sourceItem?.custom_attributes);
@@ -177,13 +140,6 @@ function transformProduct(item, store, storeBaseUrl) {
   };
 }
 
-/**
- * Transform Magento category node into canonical category.
- * @param {object} node
- * @param {string|null} parentCanonicalId
- * @param {object} store
- * @returns {object}
- */
 function transformCategory(node, parentCanonicalId, store) {
   const sourceNode = node || {};
   const customAttributes = safeArray(sourceNode?.custom_attributes);

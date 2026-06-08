@@ -1,6 +1,3 @@
-/**
- * Master Shopify sync pipeline: categories, products, category enrichment, store sync update.
- */
 const logger = require('../services/logger.service');
 const { runShopifyCategoryPipeline } = require('./category.pipeline');
 const { runShopifyProductPipeline } = require('./product.pipeline');
@@ -11,11 +8,6 @@ const {
   updateStoreLastSynced
 } = require('../services/db.service');
 
-/**
- * Enrich products with categoryIds based on Shopify collection membership.
- * @param {string} storeId
- * @returns {Promise<void>}
- */
 async function enrichProductCategoryIds(storeId) {
   const pipelineStoreId = storeId || 'store_shopify_001';
 
@@ -73,12 +65,6 @@ async function enrichProductCategoryIds(storeId) {
   });
 }
 
-/**
- * Run the full Shopify sync in the correct order.
- * @param {string} storeId
- * @param {Date|null} [since] - Optional: only fetch products updated after this date
- * @returns {Promise<{categorySummary: object, productSummary: object}>}
- */
 async function runShopifyFullSync(storeId, since) {
   const pipelineStoreId = storeId || 'store_shopify_001';
   const startTime = Date.now();
