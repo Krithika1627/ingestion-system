@@ -1,6 +1,3 @@
-/**
- * Express API entry point exposing Shopify sync endpoint.
- */
 require('dotenv').config();
 
 const express = require('express');
@@ -12,8 +9,9 @@ const webhookRoutes = require('./connectors/webhook.routes');
 const productRoutes = require('./routes/product.routes');
 const storeRoutes = require('./routes/store.routes');
 const offerRoutes = require('./routes/offer.routes');
+const searchRoutes = require('./routes/search.routes');
 const errorMiddleware = require('./middleware/error.middleware');
-const { ensureTextIndex } = require('./services/product-api.service');
+const { ensureTextIndex } = require('./services/search-api.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
 const { runMagentoFullSync } = require('./pipelines/magento.pipeline');
@@ -29,6 +27,7 @@ app.use('/scheduler', schedulerRoutes);
 app.use('/products', productRoutes);
 app.use('/stores', storeRoutes);
 app.use('/offers', offerRoutes);
+app.use('/search', searchRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {
