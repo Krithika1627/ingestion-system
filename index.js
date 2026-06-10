@@ -10,6 +10,7 @@ const productRoutes = require('./routes/product.routes');
 const storeRoutes = require('./routes/store.routes');
 const offerRoutes = require('./routes/offer.routes');
 const searchRoutes = require('./routes/search.routes');
+const aiRoutes = require('./routes/ai.routes');
 const errorMiddleware = require('./middleware/error.middleware');
 const { ensureTextIndex } = require('./services/search-api.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
@@ -28,6 +29,7 @@ app.use('/products', productRoutes);
 app.use('/stores', storeRoutes);
 app.use('/offers', offerRoutes);
 app.use('/search', searchRoutes);
+app.use('/ai', aiRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {
