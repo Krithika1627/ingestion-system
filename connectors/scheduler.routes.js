@@ -1,6 +1,8 @@
 const express = require('express');
 const logger = require('../services/logger.service');
 const { connectDB } = require('../services/db.service');
+const { SyncConfig } = require('../models/sync_config.model');
+const { getSyncStatus } = require('../services/incremental-sync.service');
 const { executeWithRetry } = require('../services/retry.service');
 const { FailedJob } = require('../models/failed_job.model');
 const {
@@ -97,6 +99,40 @@ router.post('/sync/:storeId', async (req, res) => {
       error: error?.message || String(error)
     });
     res.status(status).json({ success: false, error: error?.message || 'Manual sync failed' });
+  }
+});
+
+router.get('/sync-status/:storeId', async (req, res) => {
+  try {
+    const { storeId } = req.params || {};
+    if (!storeId) {
+      res.status(400).json({ success: false, error: 'storeId required' });
+      return;
+    }
+
+    await connectDB();
+    const [syncState, syncConfig] = await Promise.all([
+      getSyncStatus(storeId),
+      SyncConfig.findOne({ storeId, isActive: true }).select('nextRunAt').lean()
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        storeId,
+        lastSyncedAt: syncState.lastSyncedAt,
+        lastSyncStatus: syncState.lastSyncStatus,
+        nextRunAt: syncConfig?.nextRunAt || null
+      }
+    });
+  } catch (error) {
+    logger.error({
+      message: 'Failed to fetch sync status',
+      service: 'scheduler',
+      storeId: req?.params?.storeId || null,
+      error: error?.message || String(error)
+    });
+    res.status(500).json({ success: false, error: error?.message || 'Failed to fetch sync status' });
   }
 });
 

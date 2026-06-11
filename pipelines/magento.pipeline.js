@@ -125,7 +125,7 @@ async function runMagentoFullSync(storeId = 'store_magento_001', since) {
 
   await enrichMagentoProductCategoryIds(pipelineStoreId);
 
-  await updateStoreLastSynced(pipelineStoreId);
+  // await updateStoreLastSynced(pipelineStoreId);
 
   const duration = Number(((Date.now() - start) / 1000).toFixed(2));
   logger.info({

@@ -87,7 +87,7 @@ async function runUnicommerceInventorySync(storeId = 'store_unicommerce_001', fa
     ...summary
   });
 
-  await updateStoreLastSynced(pipelineStoreId);
+  //await updateStoreLastSynced(pipelineStoreId);
 
   return summary;
 }

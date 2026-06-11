@@ -106,7 +106,7 @@ async function runWooFullSync(storeId = 'store_woo_001', since) {
   const productSummary = await runWooProductPipeline(pipelineStoreId, since);
   const enrichmentSummary = await enrichWooCommerceProductCategories(pipelineStoreId);
 
-  await updateStoreLastSynced(pipelineStoreId);
+  //await updateStoreLastSynced(pipelineStoreId);
 
   const duration = Number(((Date.now() - start) / 1000).toFixed(2));
   logger.info({

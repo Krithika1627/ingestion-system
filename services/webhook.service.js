@@ -5,6 +5,7 @@ const addFormats = require('ajv-formats');
 const { randomUUID } = require('crypto');
 
 const logger = require('./logger.service');
+const { WebhookEvent } = require('../models/webhook_event.model');
 const { connectDB, upsertProduct, upsertRaw, upsertOffer, updateOfferInventory } = require('./db.service');
 const { transformProduct: transformShopifyProduct } = require('../transformers/shopify.transformer');
 const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
@@ -704,9 +705,99 @@ async function processWooCommerceWebhook(topic, payload, storeId) {
         return { ...result, topic };
 }
 
+/**
+ * Check if a webhook payload's timestamp is within the acceptable window.
+ *
+ * @param {Object} payload — Parsed webhook body
+ * @returns {{ valid: boolean, reason?: string }}
+ */
+function checkTimestamp(payload) {
+        /* Shopify sends created_at in the payload for most topics */
+        if (payload && typeof payload.created_at === 'string') {
+                const createdAt = new Date(payload.created_at);
+                if (Number.isNaN(createdAt.getTime())) {
+                        logger.warn({
+                                message: 'Shopify webhook — unparseable created_at',
+                                platform: 'shopify',
+                                created_at: payload.created_at
+                        });
+                        /* Allow through — parse failure shouldn't block */
+                        return { valid: true };
+                }
+
+                const now = Date.now();
+                const fiveMinutesMs = 5 * 60 * 1000;
+                const age = now - createdAt.getTime();
+
+                if (age > fiveMinutesMs) {
+                        return { valid: false, reason: 'Webhook too old' };
+                }
+
+                /* Reject webhooks from the future (clock skew > 30 s) */
+                if (age < -30 * 1000) {
+                        return { valid: false, reason: 'Webhook timestamp in the future' };
+                }
+        }
+        /* If no created_at, allow through — not all payloads (e.g. inventory) include it */
+        return { valid: true };
+}
+
+/**
+ * Check if a webhook has already been processed (deduplication).
+ * Handles race conditions via unique index + try/catch.
+ *
+ * @param {string|null|undefined} webhookId — Platform webhook ID
+ * @param {string} platform — 'shopify' or 'woocommerce'
+ * @returns {Promise<{ isDuplicate: boolean }>}
+ */
+async function checkDuplicate(webhookId, platform, topic, storeId) {
+        if (webhookId == null) {
+                return { isDuplicate: false };
+        }
+
+        try {
+                const existing = await WebhookEvent.findOne({ webhookId, platform, topic, storeId }).lean();
+
+                if (existing) {
+                        return { isDuplicate: true };
+                }
+
+                await WebhookEvent.create({
+                        webhookId,
+                        platform,
+                        topic,
+                        storeId
+                });
+
+                return { isDuplicate: false };
+        } catch (error) {
+                /* E11000 duplicate key error — race condition, two requests at once */
+                if (error?.code === 11000) {
+                        logger.warn({
+                                message: 'Webhook duplicate race condition caught',
+                                platform,
+                                webhookId,
+                                error: error?.message || String(error)
+                        });
+                        return { isDuplicate: true };
+                }
+
+                /* Log and allow through on unexpected errors — don't block the webhook */
+                logger.error({
+                        message: 'Webhook duplicate check error',
+                        platform,
+                        webhookId,
+                        error: error?.message || String(error)
+                });
+                return { isDuplicate: false };
+        }
+}
+
 module.exports = {
         verifyShopifyHmac,
         verifyWooCommerceSignature,
+        checkTimestamp,
+        checkDuplicate,
         processShopifyWebhook,
         processWooCommerceWebhook,
         adaptShopifyRestToGraphql,

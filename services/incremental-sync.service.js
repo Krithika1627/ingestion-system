@@ -1,15 +1,6 @@
-/**
- * Incremental sync service — tracks last sync timestamps per store
- * and provides sync windows so connectors can fetch only changed data.
- */
 const logger = require('./logger.service');
 const { connectDB, getStoreById, getCollection } = require('./db.service');
 
-/**
- * Get the last successful sync timestamp for a store.
- * @param {string} storeId
- * @returns {Promise<Date|null>}
- */
 async function getLastSyncedAt(storeId) {
   if (!storeId) {
     logger.warn({
@@ -42,13 +33,7 @@ async function getLastSyncedAt(storeId) {
   }
 }
 
-/**
- * Update lastSyncedAt and lastSyncStatus for a store.
- * @param {string} storeId
- * @param {'success'|'failed'} status
- * @returns {Promise<boolean>}
- */
-async function updateSyncTimestamp(storeId, status) {
+async function updateSyncTimestamp(storeId, status, syncResult) {
   if (!storeId) {
     logger.warn({
       message: 'Missing storeId for updateSyncTimestamp',
@@ -60,14 +45,55 @@ async function updateSyncTimestamp(storeId, status) {
   try {
     await connectDB();
     const collection = getCollection('stores');
+
+    const failedCount = syncResult?.productSummary?.failed ?? syncResult?.failed ?? 0;
+    const totalCount = syncResult?.productSummary?.total ?? syncResult?.total ?? 0;
+
+    let newStatus;
+    let advanceCursor;
+
+    if (status === 'failed') {
+      newStatus = 'failed';
+      advanceCursor = false;
+      logger.warn({
+        message: 'Sync failed — cursor NOT advanced, will retry same window',
+        service: 'incremental-sync',
+        storeId,
+        status
+      });
+    } else if (status === 'success' && failedCount > 0) {
+      newStatus = 'partial';
+      advanceCursor = false;
+      logger.warn({
+        message: 'Partial sync failure — cursor NOT advanced, will retry same window',
+        service: 'incremental-sync',
+        storeId,
+        total: totalCount,
+        failed: failedCount
+      });
+    } else {
+      newStatus = 'success';
+      advanceCursor = true;
+      logger.info({
+        message: 'Cursor advanced',
+        service: 'incremental-sync',
+        storeId,
+        lastSyncedAt: new Date().toISOString(),
+        total: totalCount
+      });
+    }
+
+    const updateFields = {
+      $set: { lastSyncStatus: newStatus }
+    };
+
+    if (advanceCursor) {
+      updateFields.$set.lastSyncedAt = new Date();
+    }
+
     const result = await collection.updateOne(
       { id: storeId },
-      {
-        $set: {
-          lastSyncedAt: new Date(),
-          lastSyncStatus: status
-        }
-      }
+      updateFields
     );
 
     if (result.matchedCount === 0) {
@@ -79,13 +105,6 @@ async function updateSyncTimestamp(storeId, status) {
       return false;
     }
 
-    logger.info({
-      message: 'Store sync timestamp updated',
-      service: 'incremental-sync',
-      storeId,
-      status
-    });
-
     return true;
   } catch (error) {
     logger.error({
@@ -93,18 +112,48 @@ async function updateSyncTimestamp(storeId, status) {
       service: 'incremental-sync',
       storeId,
       status,
+      syncResult: syncResult ? { total: syncResult.total, failed: syncResult.failed } : null,
       error: error?.message || String(error)
     });
     return false;
   }
 }
 
-/**
- * Get the sync window for a store — determines whether to run a full
- * sync or an incremental sync based on lastSyncedAt.
- * @param {string} storeId
- * @returns {Promise<{ since: Date|null, isFullSync: boolean }>}
- */
+async function getSyncStatus(storeId) {
+  if (!storeId) {
+    logger.warn({
+      message: 'Missing storeId for getSyncStatus',
+      service: 'incremental-sync'
+    });
+    return { lastSyncedAt: null, lastSyncStatus: null };
+  }
+
+  try {
+    const store = await getStoreById(storeId);
+    if (!store) {
+      logger.warn({
+        message: 'Store not found for getSyncStatus',
+        service: 'incremental-sync',
+        storeId
+      });
+      return { lastSyncedAt: null, lastSyncStatus: null };
+    }
+
+    return {
+      lastSyncedAt: store?.lastSyncedAt || null,
+      lastSyncStatus: store?.lastSyncStatus || null
+    };
+  } catch (error) {
+    logger.error({
+      message: 'Failed to get sync status',
+      service: 'incremental-sync',
+      storeId,
+      error: error?.message || String(error)
+    });
+    return { lastSyncedAt: null, lastSyncStatus: null };
+  }
+}
+
 async function getSyncWindow(storeId) {
   const lastSyncedAt = await getLastSyncedAt(storeId);
   const isFullSync = !lastSyncedAt;
@@ -128,5 +177,6 @@ async function getSyncWindow(storeId) {
 module.exports = {
   getLastSyncedAt,
   updateSyncTimestamp,
-  getSyncWindow
+  getSyncWindow,
+  getSyncStatus
 };

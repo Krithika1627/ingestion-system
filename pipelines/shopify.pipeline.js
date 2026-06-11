@@ -79,7 +79,6 @@ async function runShopifyFullSync(storeId, since) {
   const productSummary = await runShopifyProductPipeline(pipelineStoreId, since);
 
   await enrichProductCategoryIds(pipelineStoreId);
-  await updateStoreLastSynced(pipelineStoreId);
 
   const duration = Number(((Date.now() - startTime) / 1000).toFixed(2));
   logger.info({

@@ -67,7 +67,7 @@ async function executeWithRetry(config, syncFn, syncWindow) {
         attempt
       });
 
-      await syncFn(config.storeId, syncWindow);
+      const syncResult = await syncFn(config.storeId, syncWindow);
 
       logger.info({
         message: `Sync attempt ${attempt}/${MAX_ATTEMPTS} succeeded`,
@@ -77,7 +77,7 @@ async function executeWithRetry(config, syncFn, syncWindow) {
         attempt
       });
 
-      return { success: true, attempts: attempt };
+      return { success: true, attempts: attempt, result: syncResult };
     } catch (error) {
       logger.warn({
         message: `Sync attempt ${attempt}/${MAX_ATTEMPTS} failed`,
@@ -92,13 +92,13 @@ async function executeWithRetry(config, syncFn, syncWindow) {
       // (writeToDeadLetterQueue already emits the DEAD LETTER warn log)
       if (attempt === MAX_ATTEMPTS) {
         await writeToDeadLetterQueue(config, error, attempt, syncWindow);
-        return { success: false, attempts: attempt };
+        return { success: false, attempts: attempt, result: null };
       }
     }
   }
 
   // Should not reach here, but safety net
-  return { success: false, attempts: MAX_ATTEMPTS };
+  return { success: false, attempts: MAX_ATTEMPTS, result: null };
 }
 
 module.exports = {

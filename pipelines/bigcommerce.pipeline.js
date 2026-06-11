@@ -16,7 +16,7 @@ async function runBigCommerceFullSync(storeId = 'store_bigcommerce_001', since) 
   const categorySummary = await runBigCommerceCategoryPipeline(pipelineStoreId);
   const productSummary = await runBigCommerceProductPipeline(pipelineStoreId, since);
 
-  await updateStoreLastSynced(pipelineStoreId);
+  //await updateStoreLastSynced(pipelineStoreId);
 
   const duration = Number(((Date.now() - start) / 1000).toFixed(2));
   logger.info({

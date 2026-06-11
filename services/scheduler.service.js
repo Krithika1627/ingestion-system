@@ -125,7 +125,7 @@ async function registerJob(config) {
       const result = await executeWithRetry(config, syncFn, syncWindow);
 
       if (result.success) {
-        await updateSyncTimestamp(config.storeId, 'success');
+        await updateSyncTimestamp(config.storeId, 'success', result.result);
         logger.info({
           message: 'Scheduler job finished',
           service: 'scheduler',
@@ -135,7 +135,7 @@ async function registerJob(config) {
           attempts: result.attempts
         });
       } else {
-        await updateSyncTimestamp(config.storeId, 'failed');
+        await updateSyncTimestamp(config.storeId, 'failed', null);
         logger.warn({
           message: 'Scheduler job dead-lettered',
           service: 'scheduler',
@@ -146,7 +146,7 @@ async function registerJob(config) {
         });
       }
     } catch (error) {
-      await updateSyncTimestamp(config.storeId, 'failed');
+      await updateSyncTimestamp(config.storeId, 'failed', null);
       logger.warn({
         message: 'Scheduler job failed unexpectedly',
         service: 'scheduler',
@@ -281,11 +281,11 @@ async function triggerSync(storeId, options = {}) {
   });
 
   try {
-    await runPlatformSync(config.platform, storeId, since);
-    await updateSyncTimestamp(storeId, 'success');
+    const syncResult = await runPlatformSync(config.platform, storeId, since);
+    await updateSyncTimestamp(storeId, 'success', syncResult);
     return { success: true, isFullSync, platform: config.platform, storeId };
   } catch (error) {
-    await updateSyncTimestamp(storeId, 'failed');
+    await updateSyncTimestamp(storeId, 'failed', null);
     throw error;
   }
 }
