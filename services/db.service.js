@@ -1,16 +1,9 @@
-/**
- * MongoDB service for connecting and upserting products, offers, and raw responses.
- */
 const { randomUUID } = require('crypto');
 const mongoose = require('mongoose');
 const logger = require('./logger.service');
 
 let isConnected = false;
 
-/**
- * Establish a MongoDB connection using the configured MONGO_URI.
- * @returns {Promise<void>}
- */
 async function connectDB() {
   if (isConnected) {
     return;
@@ -43,11 +36,6 @@ function getCollection(name) {
   return mongoose.connection.collection(name);
 }
 
-/**
- * Upsert a canonical product into the products collection using sourceId.
- * @param {object} canonicalProduct
- * @returns {Promise<object>}
- */
 async function upsertProduct(canonicalProduct) {
   await connectDB();
 
@@ -71,12 +59,6 @@ async function upsertProduct(canonicalProduct) {
   return canonicalProduct;
 }
 
-/**
- * Upsert a raw API response into the raw_responses collection.
- * @param {string} platform
- * @param {object} rawData
- * @returns {Promise<object>}
- */
 async function upsertRaw(platform, rawData) {
   await connectDB();
 
@@ -102,11 +84,6 @@ async function upsertRaw(platform, rawData) {
   return payload;
 }
 
-/**
- * Upsert an offer record into the offers collection using sourceId + storeId.
- * @param {object} offerRecord
- * @returns {Promise<object>}
- */
 async function upsertOffer(offerRecord) {
   await connectDB();
 
@@ -173,12 +150,6 @@ async function upsertOffer(offerRecord) {
   return payload;
 }
 
-/**
- * Get all categories for a store.
- * @param {string} storeId
- * @param {string} [source]
- * @returns {Promise<object[]>}
- */
 async function getCategoriesByStore(storeId, source = 'shopify') {
   await connectDB();
 
@@ -191,12 +162,6 @@ async function getCategoriesByStore(storeId, source = 'shopify') {
   return collection.find({ storeId, source }).toArray();
 }
 
-/**
- * Get raw responses for a platform and store.
- * @param {string} platform
- * @param {string} storeId
- * @returns {Promise<object[]>}
- */
 async function getRawResponsesByPlatform(platform, storeId) {
   await connectDB();
 
@@ -214,13 +179,6 @@ async function getRawResponsesByPlatform(platform, storeId) {
   return collection.find({ platform, storeId }).toArray();
 }
 
-/**
- * Get a raw response by platform and sourceId.
- * @param {string} platform
- * @param {string} sourceId
- * @param {string} [storeId]
- * @returns {Promise<object|null>}
- */
 async function getRawResponseBySourceId(platform, sourceId, storeId) {
   await connectDB();
 
@@ -239,13 +197,6 @@ async function getRawResponseBySourceId(platform, sourceId, storeId) {
   return collection.findOne(filter);
 }
 
-/**
- * Add a categoryId to a product's categoryIds array (no duplicates).
- * @param {string} productSourceId
- * @param {string} categoryId
- * @param {string} [storeId]
- * @returns {Promise<boolean>}
- */
 async function addCategoryIdToProduct(productSourceId, categoryId, storeId) {
   await connectDB();
 
@@ -280,11 +231,6 @@ async function addCategoryIdToProduct(productSourceId, categoryId, storeId) {
   return true;
 }
 
-/**
- * Update lastSyncedAt on a store record.
- * @param {string} storeId
- * @returns {Promise<boolean>}
- */
 async function updateStoreLastSynced(storeId) {
   await connectDB();
 
@@ -308,11 +254,6 @@ async function updateStoreLastSynced(storeId) {
   return true;
 }
 
-/**
- * Get a store record by storeId.
- * @param {string} storeId
- * @returns {Promise<object|null>}
- */
 async function getStoreById(storeId) {
   await connectDB();
 
@@ -325,13 +266,6 @@ async function getStoreById(storeId) {
   return collection.findOne({ id: storeId });
 }
 
-/**
- * Get a category by sourceId, storeId, and source.
- * @param {string} sourceId
- * @param {string} storeId
- * @param {string} source
- * @returns {Promise<object|null>}
- */
 async function getCategoryBySourceId(sourceId, storeId, source) {
   await connectDB();
 
@@ -350,12 +284,6 @@ async function getCategoryBySourceId(sourceId, storeId, source) {
   return collection.findOne({ sourceId: String(sourceId), storeId, source });
 }
 
-/**
- * Get products by storeId and source.
- * @param {string} storeId
- * @param {string} source
- * @returns {Promise<object[]>}
- */
 async function getProductsByStoreAndSource(storeId, source) {
   await connectDB();
 
@@ -373,12 +301,6 @@ async function getProductsByStoreAndSource(storeId, source) {
   return collection.find({ storeId, source }).toArray();
 }
 
-/**
- * Find a product by storeId and SKU.
- * @param {string} storeId
- * @param {string} sku
- * @returns {Promise<object|null>}
- */
 async function findProductBySku(storeId, sku) {
   await connectDB();
 
@@ -397,12 +319,6 @@ async function findProductBySku(storeId, sku) {
   return collection.findOne({ sku: normalizedSku, storeId });
 }
 
-/**
- * Find a product by storeId and grouping key.
- * @param {string} storeId
- * @param {string} groupingKey
- * @returns {Promise<object|null>}
- */
 async function findProductByGroupingKey(storeId, groupingKey) {
   await connectDB();
 
@@ -421,13 +337,6 @@ async function findProductByGroupingKey(storeId, groupingKey) {
   return collection.findOne({ groupingKey: normalizedKey, storeId });
 }
 
-/**
- * Replace a product's categoryIds with canonical UUIDs.
- * @param {string} productSourceId
- * @param {string} storeId
- * @param {string[]} categoryIds
- * @returns {Promise<boolean>}
- */
 async function updateProductCategoryIds(productSourceId, storeId, categoryIds) {
   await connectDB();
 
@@ -450,12 +359,6 @@ async function updateProductCategoryIds(productSourceId, storeId, categoryIds) {
   return result.matchedCount > 0;
 }
 
-/**
- * Update offers and product variants inventory by SKU.
- * @param {string} skuCode
- * @param {object} inventoryPatch
- * @returns {Promise<object>}
- */
 async function updateOfferInventory(skuCode, inventoryPatch, storeId) {
   await connectDB();
 
@@ -528,11 +431,6 @@ async function updateOfferInventory(skuCode, inventoryPatch, storeId) {
   };
 }
 
-/**
- * Upsert a canonical category into the categories collection using sourceId + storeId.
- * @param {object} canonicalCategory
- * @returns {Promise<object>}
- */
 async function upsertCategory(canonicalCategory) {
   await connectDB();
 

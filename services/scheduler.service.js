@@ -11,7 +11,7 @@ const { runWooFullSync } = require('../pipelines/woocommerce.pipeline');
 const { runBigCommerceFullSync } = require('../pipelines/bigcommerce.pipeline');
 const { runUnicommerceInventorySync } = require('../pipelines/unicommerce.pipeline');
 const { scrapeStore } = require('./scraper/scraper.orchestrator');
-
+const { acquireLock, releaseLock } = require('./lock.service');
 const scheduleMap = new Map();
 const scheduleConfigs = new Map();
 const runningJobs = new Set();
@@ -97,6 +97,21 @@ async function registerJob(config) {
 
   const task = cron.schedule(config.cronExpression, async () => {
     const startedAt = new Date();
+
+    const lockAcquired =
+      await acquireLock(config.storeId);
+
+    if (!lockAcquired) {
+      logger.info({
+        message: 'Store sync already running',
+        service: 'scheduler',
+        storeId: config.storeId,
+        platform: config.platform
+      });
+
+      return;
+    }
+
     runningJobs.add(config.storeId);
     logger.info({
       message: 'Scheduler job started',
@@ -156,6 +171,7 @@ async function registerJob(config) {
       });
     } finally {
       runningJobs.delete(config.storeId);
+      await releaseLock(config.storeId);
       const nextRunAt = resolveNextRunAt(config.cronExpression);
       await updateRunTimestamps(config, nextRunAt, startedAt);
     }
@@ -247,46 +263,67 @@ async function updateSchedule(storeId, cronExpression) {
   return saved;
 }
 
-/**
- * Trigger an immediate sync for a store. Respects lastSyncedAt unless force is true.
- * @param {string} storeId
- * @param {object} [options]
- * @param {boolean} [options.force] - If true, ignores lastSyncedAt and runs a full sync
- * @returns {Promise<{success: boolean, isFullSync: boolean, platform: string|null, storeId: string}>}
- */
 async function triggerSync(storeId, options = {}) {
-  const config = scheduleConfigs.get(storeId);
-  if (!config) {
-    throw new Error(`No schedule found for store: ${storeId}`);
+  const lockAcquired = await acquireLock(storeId);
+
+  if (!lockAcquired) {
+    throw new Error(`Store ${storeId} is already syncing`);
   }
-
-  const force = options?.force === true;
-  let since = null;
-  let isFullSync = true;
-
-  if (!force) {
-    const window = await getSyncWindow(storeId);
-    since = window.since;
-    isFullSync = window.isFullSync;
-  }
-
-  logger.info({
-    message: 'Manual sync triggered',
-    service: 'scheduler',
-    storeId,
-    platform: config.platform,
-    isFullSync,
-    force,
-    since: since ? since.toISOString() : null
-  });
-
+  
   try {
-    const syncResult = await runPlatformSync(config.platform, storeId, since);
-    await updateSyncTimestamp(storeId, 'success', syncResult);
-    return { success: true, isFullSync, platform: config.platform, storeId };
+    const config = scheduleConfigs.get(storeId);
+    if (!config) {
+      throw new Error(`No schedule found for store: ${storeId}`);
+    }
+
+    const force = options?.force === true;
+    let since = null;
+    let isFullSync = true;
+
+    if (!force) {
+      const window = await getSyncWindow(storeId);
+      since = window.since;
+      isFullSync = window.isFullSync;
+    }
+
+    logger.info({
+      message: 'Manual sync triggered',
+      service: 'scheduler',
+      storeId,
+      platform: config.platform,
+      isFullSync,
+      force,
+      since: since ? since.toISOString() : null
+    });
+
+    const syncResult = await runPlatformSync(
+      config.platform,
+      storeId,
+      since
+    );
+
+    await updateSyncTimestamp(
+      storeId,
+      'success',
+      syncResult
+    );
+
+    return {
+      success: true,
+      isFullSync,
+      platform: config.platform,
+      storeId
+    };
   } catch (error) {
-    await updateSyncTimestamp(storeId, 'failed', null);
+    await updateSyncTimestamp(
+      storeId,
+      'failed',
+      null
+    );
+
     throw error;
+  } finally {
+    await releaseLock(storeId);
   }
 }
 
