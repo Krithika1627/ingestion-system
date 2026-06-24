@@ -2,10 +2,35 @@ const express = require('express');
 const logger = require('../services/logger.service');
 const searchApi = require('../services/search-api.service');
 const { validateSearchParams } = require('../middleware/validate.middleware');
+const rateLimit = require('express-rate-limit');
 
 const router = express.Router();
 
-router.get('/', validateSearchParams, async (req, res, next) => {
+const searchLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  //15 minute window
+  max: 100,                    //max 100 requests per IP per window
+  message: {
+    success: false,
+    error: "Too many search requests, please try again later",
+    code: 429
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const suggestionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  //15 minute window
+  max: 50,                    //max 50 requests per IP per window
+  message: {
+    success: false,
+    error: "Too many suggestion requests, please try again later",
+    code: 429
+  },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+router.get('/', searchLimiter, validateSearchParams, async (req, res, next) => {
   const startTime = Date.now();
   const validated = req.validated;
 
@@ -57,7 +82,7 @@ router.get('/', validateSearchParams, async (req, res, next) => {
   }
 });
 
-router.get('/suggestions', async (req, res, next) => {
+router.get('/suggestions', suggestionLimiter, async (req, res, next) => {
   const startTime = Date.now();
   const rawQ = req.query.q;
 
