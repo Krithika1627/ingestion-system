@@ -20,6 +20,7 @@ const { runWooFullSync } = require('./pipelines/woocommerce.pipeline');
 const { runUnicommerceInventorySync } = require('./pipelines/unicommerce.pipeline');
 const { runBigCommerceFullSync } = require('./pipelines/bigcommerce.pipeline');
 const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline');
+const qualityRoutes = require('./routes/quality.routes');
 const auth = require('./middleware/auth');
 
 const app = express();
@@ -31,6 +32,7 @@ app.use('/stores', auth, storeRoutes);
 app.use('/offers', auth, offerRoutes);
 app.use('/search', auth, searchRoutes);
 app.use('/ai', auth, aiRoutes);
+app.use('/quality', qualityRoutes);
 
 function normalizeInput(value) {
 	if (value === undefined || value === null) {

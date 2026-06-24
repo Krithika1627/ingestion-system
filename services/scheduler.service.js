@@ -7,6 +7,7 @@ const { getSyncWindow, updateSyncTimestamp } = require('./incremental-sync.servi
 const { executeWithRetry } = require('./retry.service');
 const { runShopifyFullSync } = require('../pipelines/shopify.pipeline');
 const { runMagentoFullSync } = require('../pipelines/magento.pipeline');
+const { validateProduct } = require('./data-quality.service');
 const { runWooFullSync } = require('../pipelines/woocommerce.pipeline');
 const { runBigCommerceFullSync } = require('../pipelines/bigcommerce.pipeline');
 const { runUnicommerceInventorySync } = require('../pipelines/unicommerce.pipeline');
@@ -141,6 +142,10 @@ async function registerJob(config) {
 
       if (result.success) {
         await updateSyncTimestamp(config.storeId, 'success', result.result);
+
+        /* Run data quality validation for synced products (fire-and-forget) */
+        runDataQualityCheck(result.result);
+
         logger.info({
           message: 'Scheduler job finished',
           service: 'scheduler',
@@ -308,6 +313,9 @@ async function triggerSync(storeId, options = {}) {
       syncResult
     );
 
+    /* Run data quality validation for synced products (fire-and-forget) */
+    runDataQualityCheck(syncResult);
+
     return {
       success: true,
       isFullSync,
@@ -325,6 +333,67 @@ async function triggerSync(storeId, options = {}) {
   } finally {
     await releaseLock(storeId);
   }
+}
+
+/**
+ * Extract synced canonical product IDs from a pipeline result.
+ * Pipeline results have different shapes depending on the platform:
+ * - Full sync: { categorySummary, productSummary } where productSummary has syncedCanonicalIds
+ * - Inventory sync: flat summary without canonical IDs
+ */
+function extractSyncedCanonicalIds(result) {
+  if (!result) return [];
+
+  /* Full sync pattern: { categorySummary, productSummary } */
+  if (result.productSummary && Array.isArray(result.productSummary.syncedCanonicalIds)) {
+    return result.productSummary.syncedCanonicalIds;
+  }
+
+  /* Direct product pipeline summary */
+  if (Array.isArray(result.syncedCanonicalIds)) {
+    return result.syncedCanonicalIds;
+  }
+
+  return [];
+}
+
+/**
+ * Run data quality validation for products that were just synced.
+ */
+async function runDataQualityCheck(result) {
+  const canonicalIds = extractSyncedCanonicalIds(result);
+
+  if (canonicalIds.length === 0) {
+    return;
+  }
+
+  logger.info({
+    message: 'Starting data quality validation for synced products',
+    service: 'scheduler',
+    productCount: canonicalIds.length
+  });
+
+  /* Run validation for each product — fire-and-forget to avoid blocking */
+  const validationPromises = canonicalIds.map((cid) =>
+    validateProduct(cid).catch((error) => {
+      logger.error({
+        message: 'Data quality validation failed for product',
+        service: 'scheduler',
+        canonicalProductId: cid,
+        error: error?.message || String(error)
+      });
+    })
+  );
+
+  const results = await Promise.allSettled(validationPromises);
+  const succeeded = results.filter((r) => r.status === 'fulfilled').length;
+
+  logger.info({
+    message: 'Data quality validation completed for sync batch',
+    service: 'scheduler',
+    totalAttempted: canonicalIds.length,
+    succeeded
+  });
 }
 
 function getActiveJobs() {

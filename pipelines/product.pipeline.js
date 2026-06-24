@@ -133,7 +133,8 @@ async function runShopifyProductPipeline(storeId, since) {
     canonicalProductsMapped: 0,
     canonicalSyncsFailed: 0,
     priceRangeSyncDuration: 0,
-    duration: 0
+    duration: 0,
+    syncedCanonicalIds: []
   };
 
   for (const rawProduct of rawProducts) {
@@ -366,6 +367,9 @@ async function runShopifyProductPipeline(storeId, since) {
         }
       }
 
+      if (canonicalProduct?.canonicalProductId) {
+        summary.syncedCanonicalIds.push(canonicalProduct.canonicalProductId);
+      }
       summary.success += 1;
     } catch (error) {
       summary.failed += 1;
@@ -650,6 +654,9 @@ async function runMagentoProductPipeline(storeId, since) {
         }
       }
 
+      if (canonicalProduct?.canonicalProductId) {
+        summary.syncedCanonicalIds.push(canonicalProduct.canonicalProductId);
+      }
       summary.success += 1;
     } catch (error) {
       summary.failed += 1;
@@ -706,7 +713,8 @@ async function runWooProductPipeline(storeId, since) {
     canonicalProductsMapped: 0,
     canonicalSyncsFailed: 0,
     priceRangeSyncDuration: 0,
-    duration: 0
+    duration: 0,
+    syncedCanonicalIds: []
   };
 
   for (const rawProduct of rawProducts) {
@@ -933,6 +941,9 @@ async function runWooProductPipeline(storeId, since) {
         }
       }
 
+      if (canonicalProduct?.canonicalProductId) {
+        summary.syncedCanonicalIds.push(canonicalProduct.canonicalProductId);
+      }
       summary.success += 1;
     } catch (error) {
       summary.failed += 1;
@@ -1014,7 +1025,8 @@ async function runBigCommerceProductPipeline(storeId, since) {
     canonicalProductsMapped: 0,
     canonicalSyncsFailed: 0,
     priceRangeSyncDuration: 0,
-    duration: 0
+    duration: 0,
+    syncedCanonicalIds: []
   };
 
   for (const rawProduct of rawProducts) {
@@ -1257,6 +1269,9 @@ async function runBigCommerceProductPipeline(storeId, since) {
         }
       }
 
+      if (canonicalProduct?.canonicalProductId) {
+        summary.syncedCanonicalIds.push(canonicalProduct.canonicalProductId);
+      }
       summary.success += 1;
     } catch (error) {
       summary.failed += 1;
