@@ -14,9 +14,11 @@ const { runBigCommerceFullSync } = require('../pipelines/bigcommerce.pipeline');
 const { runUnicommerceInventorySync } = require('../pipelines/unicommerce.pipeline');
 const { scrapeStore } = require('./scraper/scraper.orchestrator');
 const { acquireLock, releaseLock } = require('./lock.service');
+const { recordSyncMetric } = require('./metrics.service');
 const scheduleMap = new Map();
 const scheduleConfigs = new Map();
 const runningJobs = new Set();
+const startedAt = new Date();
 
 function resolveCronExpression(platform, cronExpression) {
   return cronExpression || DEFAULT_CRON_BY_PLATFORM[platform] || '0 */6 * * *';
@@ -164,6 +166,21 @@ async function registerJob(config) {
           outcome: 'success',
           attempts: result.attempts
         });
+
+        const syncPayload = result.result || {};
+        const failedCount = syncPayload.failed || syncPayload.failedProducts || 0;
+        await recordSyncMetric({
+          storeId: config.storeId,
+          platform: config.platform,
+          syncType: syncWindow.isFullSync ? 'full' : 'incremental',
+          status: failedCount > 0 ? 'partial' : 'success',
+          totalProducts: syncPayload.total || syncPayload.totalProducts || 0,
+          successProducts: syncPayload.success || syncPayload.successProducts || 0,
+          failedProducts: failedCount,
+          durationMs: Date.now() - startedAt.getTime(),
+          isFullSync: syncWindow.isFullSync,
+          errorMessage: null
+        });
       } else {
         await updateSyncTimestamp(config.storeId, 'failed', null);
         logger.warn({
@@ -174,6 +191,19 @@ async function registerJob(config) {
           outcome: 'failed',
           attempts: result.attempts
         });
+
+        await recordSyncMetric({
+          storeId: config.storeId,
+          platform: config.platform,
+          syncType: syncWindow.isFullSync ? 'full' : 'incremental',
+          status: 'failed',
+          totalProducts: 0,
+          successProducts: 0,
+          failedProducts: 0,
+          durationMs: Date.now() - startedAt.getTime(),
+          isFullSync: syncWindow.isFullSync,
+          errorMessage: result.error || 'Sync dead-lettered after retries'
+        });
       }
     } catch (error) {
       await updateSyncTimestamp(config.storeId, 'failed', null);
@@ -183,6 +213,19 @@ async function registerJob(config) {
         storeId: config.storeId,
         platform: config.platform,
         error: error?.message || String(error)
+      });
+
+      await recordSyncMetric({
+        storeId: config.storeId,
+        platform: config.platform,
+        syncType: 'incremental',
+        status: 'failed',
+        totalProducts: 0,
+        successProducts: 0,
+        failedProducts: 0,
+        durationMs: Date.now() - startedAt.getTime(),
+        isFullSync: false,
+        errorMessage: error?.message || 'Unexpected scheduler error'
       });
     } finally {
       runningJobs.delete(config.storeId);
@@ -322,6 +365,21 @@ async function triggerSync(storeId, options = {}) {
       'success',
       syncResult
     );
+
+    const failedCount = syncResult.failed || syncResult.failedProducts || 0;
+
+    await recordSyncMetric({
+      storeId,
+      platform: config.platform,
+      syncType: isFullSync ? 'full' : 'incremental',
+      status: failedCount > 0 ? 'partial' : 'success',
+      totalProducts: syncResult.total || syncResult.totalProducts || 0,
+      successProducts: syncResult.success || syncResult.successProducts || 0,
+      failedProducts: failedCount,
+      durationMs: Date.now() - startedAt.getTime(),
+      isFullSync,
+      errorMessage: null
+    });
 
     invalidate('/products');
     invalidate('/stores');

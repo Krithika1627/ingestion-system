@@ -530,7 +530,6 @@ async function markProductInactive(platform, sourceId, storeId) {
                         return { success: false, error: 'Product not found' };
                 }
 
-                /* Also mark related offers as out_of_stock */
                 const offersCollection = mongoose.connection.collection('offers');
                 const offersResult = await offersCollection.updateMany(
                     { sourceId, storeId },
@@ -693,12 +692,6 @@ async function processWooCommerceWebhook(topic, payload, storeId) {
         return { ...result, topic };
 }
 
-/**
- * Check if a webhook payload's timestamp is within the acceptable window.
- *
- * @param {Object} payload — Parsed webhook body
- * @returns {{ valid: boolean, reason?: string }}
- */
 function checkTimestamp(payload) {
         if (payload && typeof payload.created_at === 'string') {
                 const createdAt = new Date(payload.created_at);
