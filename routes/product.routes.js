@@ -1,6 +1,7 @@
 const express = require('express');
 const logger = require('../services/logger.service');
 const productApi = require('../services/product-api.service');
+const { get, set, buildKey, shortCache } = require('../services/cache.service');
 const { validatePagination, validateProductId } = require('../middleware/validate.middleware');
 
 const router = express.Router();
@@ -8,6 +9,10 @@ const router = express.Router();
 router.get('/', validatePagination, async (req, res, next) => {
   const startTime = Date.now();
   const validated = req.validated;
+
+  const cacheKey = buildKey('/products', validated);
+  const cached = get(shortCache, cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     const result = await productApi.getProducts({
@@ -35,7 +40,7 @@ router.get('/', validatePagination, async (req, res, next) => {
       total: result.total
     });
 
-    res.json({
+    const response = {
       success: true,
       data: result.data,
       meta: {
@@ -44,7 +49,10 @@ router.get('/', validatePagination, async (req, res, next) => {
         total: result.total,
         hasMore: result.hasMore
       }
-    });
+    };
+
+    set(shortCache, cacheKey, response);
+    res.json(response);
   } catch (error) {
     next(error);
   }
@@ -53,6 +61,10 @@ router.get('/', validatePagination, async (req, res, next) => {
 router.get('/:id', validateProductId, async (req, res, next) => {
   const startTime = Date.now();
   const { id } = req.params;
+
+  const cacheKey = buildKey('/products/' + id, {});
+  const cached = get(shortCache, cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     const product = await productApi.getProductById(id);
@@ -76,10 +88,13 @@ router.get('/:id', validateProductId, async (req, res, next) => {
       return;
     }
 
-    res.json({
+    const response = {
       success: true,
       data: product
-    });
+    };
+
+    set(shortCache, cacheKey, response);
+    res.json(response);
   } catch (error) {
     next(error);
   }

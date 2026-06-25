@@ -5,6 +5,7 @@ const productApi = require('../services/product-api.service');
 const offerApi = require('../services/offer-api.service');
 const searchApi = require('../services/search-api.service');
 const aiApi = require('../services/ai-api.service');
+const { get, set, buildKey, shortCache, longCache } = require('../services/cache.service');
 const { connectDB } = require('../services/db.service');
 
 const router = express.Router();
@@ -12,6 +13,10 @@ const router = express.Router();
 router.get('/products/:id', async (req, res, next) => {
   const startTime = Date.now();
   const { id } = req.params;
+
+  const cacheKey = buildKey('/ai/products/' + id, {});
+  const cached = get(shortCache, cacheKey);
+  if (cached) return res.json(cached);
 
   try {
     if (!id || typeof id !== 'string' || !id.startsWith('cprod_')) {
@@ -23,7 +28,6 @@ router.get('/products/:id', async (req, res, next) => {
       return;
     }
 
-    // Reuse existing service — get product
     const product = await productApi.getProductById(id);
 
     if (!product) {
@@ -52,10 +56,13 @@ router.get('/products/:id', async (req, res, next) => {
       responseTimeMs: responseTime
     });
 
-    res.json({
+    const response = {
       success: true,
       data: aiFormatted
-    });
+    };
+
+    set(shortCache, cacheKey, response);
+    res.json(response);
   } catch (error) {
     next(error);
   }
@@ -160,6 +167,10 @@ router.get('/search', async (req, res, next) => {
 router.get('/catalog', async (req, res, next) => {
   const startTime = Date.now();
 
+  const cacheKey = buildKey('/ai/catalog', { page: req.query.page, limit: req.query.limit });
+  const cached = get(longCache, cacheKey);
+  if (cached) return res.json(cached);
+
   try {
     let page = 1;
     if (req.query.page !== undefined && req.query.page !== null) {
@@ -199,7 +210,7 @@ router.get('/catalog', async (req, res, next) => {
       responseTimeMs: responseTime
     });
 
-    res.json({
+    const response = {
       success: true,
       data: {
         items,
@@ -211,7 +222,10 @@ router.get('/catalog', async (req, res, next) => {
         total,
         hasMore: skip + limit < total
       }
-    });
+    };
+
+    set(longCache, cacheKey, response);
+    res.json(response);
   } catch (error) {
     next(error);
   }

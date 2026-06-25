@@ -21,10 +21,6 @@ const dataQualityIssueSchema = new mongoose.Schema(
   { versionKey: false }
 );
 
-dataQualityIssueSchema.index({ canonicalProductId: 1 });
-dataQualityIssueSchema.index({ resolved: 1 });
-dataQualityIssueSchema.index({ severity: 1 });
-dataQualityIssueSchema.index({ detectedAt: -1 });
 dataQualityIssueSchema.index({ canonicalProductId: 1, issueCode: 1 });
 
 const DataQualityIssue =

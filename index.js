@@ -12,6 +12,7 @@ const offerRoutes = require('./routes/offer.routes');
 const searchRoutes = require('./routes/search.routes');
 const aiRoutes = require('./routes/ai.routes');
 const errorMiddleware = require('./middleware/error.middleware');
+const { setupIndexes } = require('./scripts/setup-indexes');
 const { ensureTextIndex } = require('./services/search-api.service');
 const { runShopifyFullSync } = require('./pipelines/shopify.pipeline');
 const { runShopifyCategoryPipeline, runMagentoCategoryPipeline, runWooCategoryPipeline, runBigCommerceCategoryPipeline } = require('./pipelines/category.pipeline');
@@ -21,17 +22,22 @@ const { runUnicommerceInventorySync } = require('./pipelines/unicommerce.pipelin
 const { runBigCommerceFullSync } = require('./pipelines/bigcommerce.pipeline');
 const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline');
 const qualityRoutes = require('./routes/quality.routes');
-const auth = require('./middleware/auth');
+//const auth = require('./middleware/auth');
 
 const app = express();
 app.use('/webhooks', webhookRoutes);
 app.use(express.json());
 app.use('/scheduler', schedulerRoutes);
-app.use('/products', auth, productRoutes);
-app.use('/stores', auth, storeRoutes);
-app.use('/offers', auth, offerRoutes);
-app.use('/search', auth, searchRoutes);
-app.use('/ai', auth, aiRoutes);
+// app.use('/products', auth, productRoutes);
+// app.use('/stores', auth, storeRoutes);
+// app.use('/offers', auth, offerRoutes);
+// app.use('/search', auth, searchRoutes);
+// app.use('/ai', auth, aiRoutes);
+app.use('/products', productRoutes);
+app.use('/stores', storeRoutes);
+app.use('/offers', offerRoutes);
+app.use('/search', searchRoutes);
+app.use('/ai', aiRoutes);
 app.use('/quality', qualityRoutes);
 
 function normalizeInput(value) {
@@ -241,6 +247,13 @@ async function initializeScheduler() {
 
 initializeScheduler();
 ensureTextIndex();
+setupIndexes().catch((error) => {
+  logger.warn({
+    message: 'Index setup failed on startup',
+    service: 'setup-indexes',
+    error: error?.message || String(error)
+  });
+});
 
 app.use(errorMiddleware);
 

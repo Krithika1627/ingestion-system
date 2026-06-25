@@ -1,11 +1,11 @@
 const express = require('express');
 const logger = require('../services/logger.service');
 const dataQuality = require('../services/data-quality.service');
+const { getCacheStats } = require('../services/cache.service');
 const { DataQualityIssue } = require('../models/data_quality_issue.model');
 
 const router = express.Router();
 
-/* GET /quality/issues — List data quality issues with filters and pagination */
 router.get('/issues', async (req, res, next) => {
   const startTime = Date.now();
 
@@ -97,7 +97,6 @@ router.get('/issues', async (req, res, next) => {
   }
 });
 
-/* GET /quality/issues/summary — Count breakdown of open issues */
 router.get('/issues/summary', async (req, res, next) => {
   const startTime = Date.now();
 
@@ -146,7 +145,6 @@ router.get('/issues/summary', async (req, res, next) => {
   }
 });
 
-/* POST /quality/validate — Trigger full validation across all products (async) */
 router.post('/validate', async (req, res, next) => {
   try {
     const { severity, limit } = req.body || {};
@@ -177,7 +175,19 @@ router.post('/validate', async (req, res, next) => {
   }
 });
 
-/* POST /quality/issues/:id/resolve — Mark an issue as resolved */
+router.get('/cache-stats', async (req, res, next) => {
+  try {
+    const stats = getCacheStats();
+
+    res.json({
+      success: true,
+      data: stats
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 router.post('/issues/:id/resolve', async (req, res, next) => {
   const startTime = Date.now();
   const { id } = req.params;

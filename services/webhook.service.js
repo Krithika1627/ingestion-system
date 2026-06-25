@@ -6,6 +6,7 @@ const { randomUUID } = require('crypto');
 
 const logger = require('./logger.service');
 const { WebhookEvent } = require('../models/webhook_event.model');
+const { invalidate } = require('./cache.service');
 const { connectDB, upsertProduct, upsertRaw, upsertOffer, updateOfferInventory } = require('./db.service');
 const { transformProduct: transformShopifyProduct } = require('../transformers/shopify.transformer');
 const { transformProduct: transformWooProduct } = require('../transformers/woocommerce.transformer');
@@ -204,7 +205,6 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
         try {
                 await connectDB();
 
-                /* 1. Adapt REST → GraphQL, then store raw */
                 const graphqlNode = adaptShopifyRestToGraphql(rawProduct);
 
                 const rawPayload = {
@@ -214,11 +214,9 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
                 };
                 await upsertRaw('shopify', rawPayload);
 
-                /* 2. Transform */
                 let canonicalProduct = transformShopifyProduct(graphqlNode, pipelineStoreId);
                 canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
 
-                /* 3. Validate */
                 const isValid = validate(canonicalProduct);
                 if (!isValid) {
                         logger.warn({
@@ -231,22 +229,18 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
                         return { success: false, sourceId: canonicalProduct?.sourceId || null, error: 'Validation failed' };
                 }
 
-                /* 4. Match & merge */
                 const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
                 if (matchResult?.match) {
                         canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
                 }
 
-                /* 5. Canonical mapping */
                 const canonicalResult = await getOrCreateCanonical(canonicalProduct);
                 if (canonicalResult?.canonical?.canonicalId) {
                         canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
                 }
 
-                /* 6. Upsert product */
                 await upsertProduct(canonicalProduct);
 
-                /* 7. Upsert offers for each variant */
                 const variants = Array.isArray(canonicalProduct?.variants) ? canonicalProduct.variants : [];
                 if (variants.length > 0) {
                         const offerTasks = variants.map((variant) => {
@@ -256,7 +250,6 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
                         await Promise.allSettled(offerTasks);
                 }
 
-                /* 8. Canonical source mapping + conflict resolution + price sync */
                 if (canonicalResult?.canonical?.canonicalId) {
                         await mapSourceToCanonical(canonicalProduct, canonicalResult.canonical.canonicalId);
                         await updateCanonicalWithConflictResolution(canonicalResult.canonical.canonicalId, canonicalProduct);
@@ -274,6 +267,9 @@ async function processSingleShopifyProduct(rawProduct, storeId) {
                                         error: priceError?.message || String(priceError)
                                 });
                         }
+
+                        invalidate('/products/' + canonicalProduct.canonicalProductId);
+                        invalidate('/ai/products/' + canonicalProduct.canonicalProductId);
                 }
 
                 return { success: true, sourceId: canonicalProduct?.sourceId || null };
@@ -298,25 +294,20 @@ async function processSingleWooProduct(rawProduct, storeId) {
 
                 const sourceId = rawProduct?.id != null ? String(rawProduct.id) : null;
 
-                /* 1. Store raw */
                 const rawPayload = {
                         storeId: pipelineStoreId,
                         sourceId,
                         data: rawProduct
                 };
                 await upsertRaw('woocommerce', rawPayload);
-
-                /* 2. Transform — WooCommerce webhook payload matches REST format */
                 
                 let canonicalProduct = transformWooProduct(rawProduct, pipelineStoreId);
                 canonicalProduct.groupingKey = buildGroupingKey(canonicalProduct);
 
-                /* Ensure status is a string (WooCommerce may not always send it) */
                 if (!canonicalProduct.status || typeof canonicalProduct.status !== 'string') {
                 canonicalProduct.status = rawProduct?.status === 'draft' ? 'draft' : 'active';
                 }
 
-                /* 3. Validate */
                 const isValid = validate(canonicalProduct);
                 if (!isValid) {
                         logger.warn({
@@ -329,22 +320,18 @@ async function processSingleWooProduct(rawProduct, storeId) {
                         return { success: false, sourceId: canonicalProduct?.sourceId || null, error: 'Validation failed' };
                 }
 
-                /* 4. Match & merge */
                 const matchResult = await findExistingProductMatch(pipelineStoreId, canonicalProduct);
                 if (matchResult?.match) {
                         canonicalProduct = mergeMatchedProduct(matchResult.match, canonicalProduct);
                 }
 
-                /* 5. Canonical mapping */
                 const canonicalResult = await getOrCreateCanonical(canonicalProduct);
                 if (canonicalResult?.canonical?.canonicalId) {
                         canonicalProduct.canonicalProductId = canonicalResult.canonical.canonicalId;
                 }
 
-                /* 6. Upsert product */
                 await upsertProduct(canonicalProduct);
 
-                /* 7. Upsert offer */
                 const parseNumber = (v) => { const p = parseFloat(v); return Number.isFinite(p) ? p : null; };
                 const price = parseNumber(rawProduct?.price);
                 const regularPrice = parseNumber(rawProduct?.regular_price);
@@ -373,7 +360,6 @@ async function processSingleWooProduct(rawProduct, storeId) {
 
                 await upsertOffer(offerRecord);
 
-                /* 8. Canonical source mapping + conflict resolution + price sync */
                 if (canonicalResult?.canonical?.canonicalId) {
                         await mapSourceToCanonical(canonicalProduct, canonicalResult.canonical.canonicalId);
                         await updateCanonicalWithConflictResolution(canonicalResult.canonical.canonicalId, canonicalProduct);
@@ -391,6 +377,10 @@ async function processSingleWooProduct(rawProduct, storeId) {
                                         error: priceError?.message || String(priceError)
                                 });
                         }
+
+                        /* Invalidate caches for the updated product */
+                        invalidate('/products/' + canonicalProduct.canonicalProductId);
+                        invalidate('/ai/products/' + canonicalProduct.canonicalProductId);
                 }
 
                 return { success: true, sourceId };
@@ -423,7 +413,6 @@ async function handleInventoryLevelUpdate(payload, storeId) {
         try {
                 await connectDB();
 
-                /* Search raw_responses for a Shopify product containing this inventory_item_id */
                 const rawCollection = mongoose.connection.collection('raw_responses');
                 const rawDoc = await rawCollection.findOne({
                         platform: 'shopify',
@@ -441,7 +430,6 @@ async function handleInventoryLevelUpdate(payload, storeId) {
                 }
 
                 if (!sku) {
-                        /* Fallback: search canonical products collection */
                         const productsCollection = mongoose.connection.collection('products');
                         const product = await productsCollection.findOne({
                                 source: 'shopify',
@@ -712,7 +700,6 @@ async function processWooCommerceWebhook(topic, payload, storeId) {
  * @returns {{ valid: boolean, reason?: string }}
  */
 function checkTimestamp(payload) {
-        /* Shopify sends created_at in the payload for most topics */
         if (payload && typeof payload.created_at === 'string') {
                 const createdAt = new Date(payload.created_at);
                 if (Number.isNaN(createdAt.getTime())) {
@@ -721,7 +708,6 @@ function checkTimestamp(payload) {
                                 platform: 'shopify',
                                 created_at: payload.created_at
                         });
-                        /* Allow through — parse failure shouldn't block */
                         return { valid: true };
                 }
 
@@ -733,23 +719,13 @@ function checkTimestamp(payload) {
                         return { valid: false, reason: 'Webhook too old' };
                 }
 
-                /* Reject webhooks from the future (clock skew > 30 s) */
                 if (age < -30 * 1000) {
                         return { valid: false, reason: 'Webhook timestamp in the future' };
                 }
         }
-        /* If no created_at, allow through — not all payloads (e.g. inventory) include it */
         return { valid: true };
 }
 
-/**
- * Check if a webhook has already been processed (deduplication).
- * Handles race conditions via unique index + try/catch.
- *
- * @param {string|null|undefined} webhookId — Platform webhook ID
- * @param {string} platform — 'shopify' or 'woocommerce'
- * @returns {Promise<{ isDuplicate: boolean }>}
- */
 async function checkDuplicate(webhookId, platform, topic, storeId) {
         if (webhookId == null) {
                 return { isDuplicate: false };
@@ -771,7 +747,6 @@ async function checkDuplicate(webhookId, platform, topic, storeId) {
 
                 return { isDuplicate: false };
         } catch (error) {
-                /* E11000 duplicate key error — race condition, two requests at once */
                 if (error?.code === 11000) {
                         logger.warn({
                                 message: 'Webhook duplicate race condition caught',
@@ -782,7 +757,6 @@ async function checkDuplicate(webhookId, platform, topic, storeId) {
                         return { isDuplicate: true };
                 }
 
-                /* Log and allow through on unexpected errors — don't block the webhook */
                 logger.error({
                         message: 'Webhook duplicate check error',
                         platform,
