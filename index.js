@@ -24,23 +24,23 @@ const { runBigCommerceProductPipeline } = require('./pipelines/product.pipeline'
 const qualityRoutes = require('./routes/quality.routes');
 const metricsRoutes = require('./routes/metrics.routes');
 const metricsMiddleware = require('./middleware/metrics.middleware');
-//const auth = require('./middleware/auth');
+const auth = require('./middleware/auth');
 
 const app = express();
 app.use('/webhooks', webhookRoutes);
 app.use(express.json());
 app.use(metricsMiddleware);
 app.use('/scheduler', schedulerRoutes);
-// app.use('/products', auth, productRoutes);
-// app.use('/stores', auth, storeRoutes);
-// app.use('/offers', auth, offerRoutes);
-// app.use('/search', auth, searchRoutes);
-// app.use('/ai', auth, aiRoutes);
-app.use('/products', productRoutes);
-app.use('/stores', storeRoutes);
-app.use('/offers', offerRoutes);
-app.use('/search', searchRoutes);
-app.use('/ai', aiRoutes);
+app.use('/products', auth, productRoutes);
+app.use('/stores', auth, storeRoutes);
+app.use('/offers', auth, offerRoutes);
+app.use('/search', auth, searchRoutes);
+app.use('/ai', auth, aiRoutes);
+// app.use('/products', productRoutes);
+// app.use('/stores', storeRoutes);
+// app.use('/offers', offerRoutes);
+// app.use('/search', searchRoutes);
+// app.use('/ai', aiRoutes);
 app.use('/quality', qualityRoutes);
 app.use('/metrics', metricsRoutes);
 
