@@ -11,6 +11,8 @@ On error:
 { "success": false, "error": "message", "code": 404 }
 ```
 
+Authentication: Production deployments require an X-API-Key header. Authentication may be disabled in local development.
+
 ---
 
 ## Table of Contents
